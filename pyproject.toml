@@ -19,6 +19,8 @@ pick = "^1.1.0"  # För att hantera val i terminalen, som i ditt fall
 requests = "^2.26.0"  # Om du använder requests för API-anrop eller webbsökningar
 # Lägg till fler beroenden här vid behov
 loguru = "^0.7.3"
+click-completion = "^0.5.2"
+click = "^8.1.8"
 
 [tool.poetry.dev-dependencies]
 # Lägg till utvecklingsberoenden här, som tester eller byggverktyg

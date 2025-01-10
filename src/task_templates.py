@@ -1,17 +1,28 @@
 """Template system for AI task generation.
 
-This module provides a collection of templates that guide AI models in performing
-various development tasks. Each template is designed to produce consistent,
-high-quality outputs while maintaining clarity and focus.
+This module provides a comprehensive template system for generating clear,
+consistent instructions for AI models. Templates are designed to maximize
+the effectiveness of AI responses while ensuring consistency and quality
+across all generated content.
+
+The template system includes:
+- Base templates for common operations
+- System context for consistent behavior
+- Built-in format validation
+- Example-based guidance
 """
 
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, ClassVar
 
 
 @dataclass
 class Template:
     """A template for generating AI instructions.
+    
+    This class represents a reusable template that can be filled with
+    specific task details to create clear, consistent instructions for
+    the AI model.
 
     Attributes:
         name: Template identifier
@@ -37,7 +48,15 @@ class Template:
             ValueError: If required parameters are missing
         """
         try:
-            return self.prompt.format(**kwargs)
+            # Format the prompt with provided parameters
+            formatted = self.prompt.format(**kwargs)
+            
+            # Add examples if available
+            if self.examples:
+                formatted += f"\n\nExamples:\n{self.examples}"
+                
+            return formatted
+            
         except KeyError as e:
             missing_key = str(e).strip("'")
             raise ValueError(
@@ -48,167 +67,130 @@ class Template:
 class TaskTemplates:
     """Collection of task templates for different purposes."""
 
+    # System context template - provides consistent base behavior
+    SYSTEM_CONTEXT: ClassVar[str] = """
+You are an AI assistant specializing in Python development. Your task is to help
+develop a robust, maintainable system while following these principles:
+
+1. Code Quality:
+   - Follow PEP 8 and PEP 257 standards exactly
+   - Use clear, descriptive names that reflect purpose
+   - Write comprehensive documentation for all components
+   - Implement proper error handling with specific exceptions
+
+2. Architecture:
+   - Keep components modular and focused
+   - Use dependency injection for flexible testing
+   - Follow SOLID principles consistently
+   - Maintain clear interfaces between components
+
+3. Safety:
+   - Validate all inputs thoroughly
+   - Handle errors gracefully with proper recovery
+   - Protect sensitive data using secure practices
+   - Implement comprehensive logging for debugging
+
+4. Testing:
+   - Write comprehensive tests for all functionality
+   - Cover edge cases and error conditions
+   - Test error handling paths explicitly
+   - Validate all outputs thoroughly
+
+5. Performance:
+   - Use appropriate data structures
+   - Implement efficient algorithms
+   - Consider resource usage
+   - Add caching where beneficial
+
+When implementing solutions:
+- Consider long-term maintainability
+- Plan for future extensibility
+- Focus on reliability and robustness
+- Optimize appropriately without premature optimization
+"""
+
     # Template for initial task description and analysis
     DESCRIPTION = Template(
         name="description",
         description="Initial analysis and breakdown of a task",
-        prompt="""
-Analyze and describe how to implement the following task in a Python project:
+        prompt=SYSTEM_CONTEXT + """
+Analyze and describe how to implement the following task:
 
 {task_description}
 
-Your analysis should include:
+Provide:
 
-1. Core Functionality:
-   - Main components needed
-   - Key features to implement
-   - Essential algorithms or data structures
+1. Component Analysis:
+   - Core functionality needed
+   - Required components and modules
+   - Key classes and functions
+   - Data structures and algorithms
 
 2. Implementation Strategy:
    - Development sequence
-   - Component interactions
    - Integration points
-   - Error handling approach
+   - Testing approach
+   - Validation methods
 
 3. Technical Considerations:
-   - Required dependencies
-   - Performance factors
-   - Security considerations
+   - Error handling strategies
+   - Performance considerations
+   - Security requirements
+   - Resource management
+
+4. Quality Assurance:
    - Testing requirements
+   - Validation steps
+   - Error scenarios
+   - Performance criteria
 
-4. Architecture & Design:
-   - Module organization
-   - Class/function structure
-   - Interface designs
-   - Data flow patterns
-
-Focus on creating a solution that is:
-- Maintainable and well-documented
-- Secure and robust
-- Efficient and scalable
-- Easy to test and extend
-
-Provide a clear, structured plan for implementing this task."""
+Focus on creating a robust, maintainable solution that follows best practices
+and can be extended in the future."""
     )
 
     # Template for code generation
     CODE = Template(
         name="code",
         description="Generate implementation code",
-        prompt="""
+        prompt=SYSTEM_CONTEXT + """
 Write Python code to implement:
 
 {task_description}
 
 Requirements:
-1. Code Quality:
-   - Follow PEP 8 style guide
-   - Use clear, descriptive names
-   - Keep functions focused and modular
-   - Include comprehensive docstrings (PEP 257)
 
-2. Technical Requirements:
-   - Use type hints for clarity
-   - Implement proper error handling
-   - Add input validation
-   - Include logging where appropriate
+1. Code Structure:
+   - Clear module organization
+   - Logical class hierarchy
+   - Focused functions
+   - Clean interfaces
 
-3. Design Patterns:
-   - Use appropriate design patterns
+2. Quality Standards:
+   - Complete type hints
+   - Comprehensive docstrings
+   - Informative comments
+   - Proper error handling
+
+3. Best Practices:
    - Follow SOLID principles
-   - Keep code DRY
-   - Make interfaces clear
+   - Use design patterns appropriately
+   - Implement proper logging
+   - Add input validation
 
-4. Testing & Maintenance:
-   - Write testable code
+4. Testing Considerations:
+   - Make code testable
    - Consider edge cases
-   - Add helpful comments
-   - Make error messages clear
-
-The implementation should be production-ready and well-documented."""
-    )
-
-    # Template for test generation
-    TEST = Template(
-        name="test",
-        description="Generate test code",
-        prompt="""
-Create comprehensive tests for:
-
-{task_description}
-
-Test Suite Requirements:
-
-1. Unit Tests:
-   - Test each component in isolation
-   - Cover all public interfaces
-   - Include edge cases
-   - Test error conditions
-
-2. Integration Tests:
-   - Test component interactions
-   - Verify data flow
-   - Test system behaviors
-   - Check error propagation
-
-3. Test Organization:
-   - Use clear test names
-   - Group related tests
-   - Include setup/teardown
-   - Document test purposes
-
-4. Quality Checks:
-   - Ensure high coverage
-   - Test error handling
-   - Verify performance
+   - Handle errors gracefully
    - Validate outputs
 
-Use pytest fixtures and parameterization where appropriate."""
+The code should be production-ready and well-documented."""
     )
 
-    # Template for documentation
-    DOCUMENT = Template(
-        name="document",
-        description="Generate documentation",
-        prompt="""
-Create comprehensive documentation for:
-
-{task_description}
-
-Documentation Sections:
-
-1. Overview:
-   - Purpose and goals
-   - Key features
-   - Main components
-   - System architecture
-
-2. Technical Details:
-   - Implementation specifics
-   - API documentation
-   - Data structures
-   - Algorithms used
-
-3. Usage Guide:
-   - Installation steps
-   - Configuration options
-   - Common use cases
-   - Best practices
-
-4. Development Guide:
-   - Setup instructions
-   - Contributing guidelines
-   - Testing procedures
-   - Deployment process
-
-Follow Google-style Python docstring format."""
-    )
-
-    # Template for optimization tasks
+    # Template for optimization
     OPTIMIZE = Template(
         name="optimize",
         description="Optimize existing code",
-        prompt="""
+        prompt=SYSTEM_CONTEXT + """
 Review and optimize this code:
 
 {task_description}
@@ -222,62 +204,100 @@ Focus Areas:
    - Processing speed
 
 2. Code Quality:
-   - Readability
-   - Maintainability
-   - Best practices
-   - Documentation
+   - Readability improvements
+   - Better organization
+   - Enhanced documentation
+   - Clearer error handling
 
-3. Reliability:
-   - Error handling
-   - Edge cases
+3. Robustness:
+   - Input validation
+   - Error recovery
    - Resource cleanup
-   - Thread safety
+   - Edge case handling
 
 4. Architecture:
-   - Code organization
    - Design patterns
-   - Dependency management
+   - Component structure
    - Interface design
+   - Dependency management
 
-Provide clear explanations for optimization choices."""
+Provide clear explanations for all optimization choices."""
     )
 
-    # Template for review tasks
-    REVIEW = Template(
-        name="review",
-        description="Review and analyze code",
-        prompt="""
-Review this code and provide analysis:
+    # Template for documentation
+    DOCUMENT = Template(
+        name="document",
+        description="Generate documentation",
+        prompt=SYSTEM_CONTEXT + """
+Create comprehensive documentation for:
 
 {task_description}
 
-Review Criteria:
+Include:
 
-1. Code Quality:
-   - PEP 8 compliance
-   - Documentation quality
-   - Naming conventions
-   - Code organization
+1. Overview:
+   - Purpose and goals
+   - System architecture
+   - Key components
+   - Design decisions
 
-2. Technical Analysis:
-   - Algorithm choices
-   - Performance implications
-   - Security considerations
-   - Resource management
+2. Technical Details:
+   - Implementation specifics
+   - Class/function documentation
+   - Data structures
+   - Algorithms
 
-3. Architecture Review:
-   - Design patterns
-   - Component coupling
-   - Interface design
+3. Usage Guide:
+   - Installation steps
+   - Configuration options
+   - Common use cases
    - Error handling
 
-4. Improvement Suggestions:
-   - Optimization opportunities
-   - Better approaches
-   - Missing features
-   - Security enhancements
+4. Development Guide:
+   - Setup instructions
+   - Testing procedures
+   - Contribution guidelines
+   - Best practices
 
-Provide specific, actionable feedback."""
+Follow Google's Python documentation style guide."""
+    )
+
+    # Template for testing
+    TEST = Template(
+        name="test",
+        description="Generate test code",
+        prompt=SYSTEM_CONTEXT + """
+Create comprehensive tests for:
+
+{task_description}
+
+Include:
+
+1. Unit Tests:
+   - Function-level testing
+   - Class method testing
+   - Edge case validation
+   - Error handling verification
+
+2. Integration Tests:
+   - Component interaction
+   - System workflows
+   - External dependencies
+   - Error propagation
+
+3. Test Organization:
+   - Logical grouping
+   - Clear naming
+   - Proper setup/teardown
+   - Resource management
+
+4. Coverage:
+   - Code paths
+   - Edge cases
+   - Error conditions
+   - Performance scenarios
+
+Use pytest and follow testing best practices."""
     )
 
     @classmethod
@@ -293,7 +313,20 @@ Provide specific, actionable feedback."""
         Raises:
             ValueError: If template type not found
         """
-        template = getattr(cls, template_type.upper(), None)
-        if not template:
+        try:
+            return getattr(cls, template_type.upper())
+        except AttributeError:
             raise ValueError(f"Unknown template type: {template_type}")
-        return template
+
+    @classmethod
+    def list_templates(cls) -> Dict[str, str]:
+        """List all available templates.
+        
+        Returns:
+            Dict mapping template names to their descriptions
+        """
+        return {
+            name.lower(): getattr(cls, name).description
+            for name in dir(cls)
+            if isinstance(getattr(cls, name), Template)
+        }
