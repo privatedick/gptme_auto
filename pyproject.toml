@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "gptme-auto"  # Projektets namn
+version = "0.1.0"  # Version av ditt projekt
+description = "A project that automates GPT-based tasks"
+authors = ["Your Name <you@example.com>"]
+license = "MIT"  # Du kan ändra detta beroende på vilken licens du använder
+
+# Specifierar att projektet finns i katalogen "src"
+packages = [
+    { include = "src" }
+]
+
+[tool.poetry.dependencies]
+# Lägg till eventuella beroenden här
+python = "^3.12"  # Ange Python-versionen som ditt projekt kräver
+
+# Exempel på beroenden:
+pick = "^1.1.0"  # För att hantera val i terminalen, som i ditt fall
+requests = "^2.26.0"  # Om du använder requests för API-anrop eller webbsökningar
+# Lägg till fler beroenden här vid behov
+loguru = "^0.7.3"
+
+[tool.poetry.dev-dependencies]
+# Lägg till utvecklingsberoenden här, som tester eller byggverktyg
+pytest = "^7.1.2"  # Om du använder pytest för tester
+black = "^21.12b0"  # Om du använder Black för kodformattering
+flake8 = "^4.0.1"  # Om du använder Flake8 för statisk kodanalys
+
+[build-system]
+# Dessa inställningar behövs för att bygga och installera paketet korrekt
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

@@ -1,0 +1,110 @@
+# Configuration for AI-assisted development system
+
+[gptme]
+default_model = "gemini-2-0-flash-thinking-exp"
+worker_model = "gemini-2-0-experimental"
+supervisor_model = "gemini-2-0-flash-thinking-exp"
+
+[env]
+GEMINI_API_KEY = { env = "GEMINI_API_KEY" }
+ANTHROPIC_API_KEY = { env = "ANTHROPIC_API_KEY" }
+
+[models.gemini-2-0-flash-thinking-exp]
+provider = "google"
+model = "gemini-2.0-flash-thinking-exp"
+max_tokens = 8192
+temperature = 0.7
+max_calls_per_minute = 15
+max_input_tokens = 32000
+role = ["supervisor", "analysis", "review"]
+priority_tasks = ["architecture", "code_review", "optimization"]
+
+[models.gemini-2-0-experimental]
+provider = "google"
+model = "gemini-2.0-experimental"
+max_tokens = 1000000
+temperature = 0.7
+max_calls_per_minute = 15
+max_input_tokens = 1000000
+role = ["worker", "bulk_processing"]
+priority_tasks = ["implementation", "documentation", "testing"]
+
+[workflow]
+parallel_tasks = 3
+task_timeout = 300  # seconds
+retry_attempts = 3
+quality_check_frequency = 5  # Check every N tasks
+use_supervisor = true
+
+[workflow.quality]
+supervisor_model = "gemini-2-0-flash-thinking-exp"
+review_percentage = 20  # Review 20% of tasks
+critical_paths = ["security", "core_functionality", "data_handling"]
+
+[context]
+include = ["src/**/*.py", "tests/**/*.py", "*.md"]
+exclude = [
+    "venv/**",
+    ".git/**",
+    "__pycache__/**",
+    "*.pyc",
+    "*.pyo",
+    "*.pyd",
+    ".DS_Store"
+]
+cache_enabled = true
+cache_ttl = 3600  # seconds
+max_context_size = 30000  # tokens
+
+[context.templates]
+path = "templates/"
+priority_files = ["system_context.md", "architecture.md"]
+
+[tools]
+enabled = ["read", "save", "shell", "python", "git", "lint", "queue"]
+auto_format = true
+auto_lint = true
+
+[tools.queue]
+enabled = true
+storage = "task_queue.json"
+max_parallel = 3
+status_file = "queue_status.json"
+
+[tools.git]
+allowed_commands = ["checkout", "commit", "push", "pull", "branch", "status"]
+branch_prefix = "ai-dev"
+auto_commit = true
+commit_template = "feat: {description}"
+
+[tools.shell]
+allowed_commands = ["ruff", "mypy", "pytest", "black", "git", "poetry"]
+execute_command = true
+
+[tools.python]
+venv_path = ".venv"
+requirements_file = "pyproject.toml"
+package_manager = "poetry"
+
+[logging]
+level = "info"
+format = "{timestamp} - {level} - {message}"
+file = "gptme.log"
+rotate = true
+max_size = 10485760  # 10MB
+backup_count = 5
+
+[monitoring]
+enabled = true
+metrics_file = "metrics.json"
+alert_on_failure = true
+performance_tracking = true
+
+[security]
+allow_file_write = true
+allowed_directories = ["src", "tests"]
+restricted_files = ["config/*.toml", "secrets.env"]
+
+[model_management]
+auto_switch = true
+switch_criteria = "cost"

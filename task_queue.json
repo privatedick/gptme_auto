@@ -1,0 +1,15 @@
+{
+  "project_structure": {
+    "name": "project_structure",
+    "description": "Create the initial project structure with Poetry:\n- Define project metadata\n- Configure dependencies\n- Setup development tools\n- Create basic directory structure\n\nKey requirements:\n- Use Poetry for dependency management\n- Include essential development dependencies\n- Configure code quality tools\n- Setup logging directory",
+    "template_type": "description",
+    "priority": 10,
+    "status": "failed",
+    "context_paths": [],
+    "dependencies": [],
+    "created_at": "2024-10-04T12:00:00",
+    "completed_at": null,
+    "outputs": [],
+    "metadata": {}
+  }
+}

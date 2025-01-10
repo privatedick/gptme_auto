@@ -1,21 +1,21 @@
 """Task queue system for AI-assisted development.
 
-This module provides a simple but powerful task queue system designed specifically
-for managing AI-assisted development tasks. It supports:
-- Task dependencies and ordering
-- Template-based task generation
-- Context management
-- Task prioritization
-- Progress tracking
+This module provides a task queue system designed specifically for managing 
+AI-assisted development tasks. It supports task dependencies, parallel processing,
+and automatic task execution using GPTme.
 """
 
+import asyncio
+import json
+import logging
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Set
-import json
-import logging
+
+from .task_templates import TaskTemplates, Template
+
 
 class TaskStatus(Enum):
     """Possible states for a task."""
@@ -23,6 +23,7 @@ class TaskStatus(Enum):
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     FAILED = "failed"
+
 
 class TemplateType(Enum):
     """Standard template types for tasks."""
@@ -34,6 +35,7 @@ class TemplateType(Enum):
     TEST = "test"             # Test generation
     REVIEW = "review"         # Code review
     IMPROVE = "improve"       # General improvements
+
 
 @dataclass
 class Task:
@@ -95,13 +97,13 @@ class Task:
             data['completed_at'] = datetime.fromisoformat(data['completed_at'])
         return cls(**data)
 
+
 class TaskQueue:
     """Manages a queue of tasks for AI-assisted development.
     
     This class handles task organization, dependencies, and persistence.
     It ensures tasks are processed in the correct order while maintaining
-    their relationships and context requirements. The queue can run
-    as a background process, automatically processing tasks using gptme.
+    their relationships and context requirements.
     """
 
     def __init__(self, queue_file: Path, max_parallel: int = 3):
@@ -115,14 +117,10 @@ class TaskQueue:
         self.tasks: Dict[str, Task] = {}
         self.logger = self._setup_logger()
         self.max_parallel = max_parallel
-        self.running = False
+        self.shutdown_event = asyncio.Event()
         self.current_tasks: Set[str] = set()
         self.process_lock = asyncio.Lock()
         self.load_queue()
-        
-        # Setup signal handlers for graceful shutdown
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            signal.signal(sig, self._handle_shutdown)
 
     def _setup_logger(self) -> logging.Logger:
         """Configure logging for the task queue."""
@@ -135,18 +133,104 @@ class TaskQueue:
         logger.addHandler(handler)
         return logger
 
-    def add_task(self, task: Task) -> None:
-        """Add a task to the queue.
+    async def run_queue(self) -> None:
+        """Run the task queue processing.
+        
+        This method will continuously process tasks until all are completed
+        or the queue is stopped.
+        """
+        try:
+            self.logger.info("Starting task queue processing")
+            
+            while not self.shutdown_event.is_set() and self._has_pending_tasks():
+                tasks = await self.get_next_tasks()
+                
+                if not tasks:
+                    await asyncio.sleep(1)
+                    continue
+                
+                self.logger.info(f"Processing {len(tasks)} tasks")
+                results = await asyncio.gather(
+                    *[self.process_task(task) for task in tasks],
+                    return_exceptions=True
+                )
+                
+                async with self.process_lock:
+                    for task in tasks:
+                        self.current_tasks.remove(task.name)
+                
+                for task, result in zip(tasks, results):
+                    if isinstance(result, Exception):
+                        self.logger.error(
+                            f"Task {task.name} failed with error: {result}"
+                        )
+            
+            self.logger.info("Task queue processing completed")
+            
+        except Exception as e:
+            self.logger.error(f"Queue processing error: {e}")
+            raise
+        finally:
+            self.save_queue()
+
+    async def process_task(self, task: Task) -> bool:
+        """Process a single task using gptme.
         
         Args:
-            task: Task to add
+            task: Task to process
+            
+        Returns:
+            bool: True if task was processed successfully
         """
-        self.logger.info(f"Adding task: {task.name}")
-        self.tasks[task.name] = task
-        self.save_queue()
+        try:
+            template = TaskTemplates.get_template(task.template_type.value)
+            
+            context_files = ["system_context.md"]
+            if task.context_paths:
+                context_files.extend(task.context_paths)
+                
+            context_args = " ".join(f"-c {path}" for path in context_files)
+            prompt = template.apply_template(task_description=task.description)
+            cmd = f"poetry run gptme '{prompt}' {context_args}"
+            
+            process = await asyncio.create_subprocess_shell(
+                cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode == 0:
+                await self.update_task_status(
+                    task.name,
+                    TaskStatus.COMPLETED,
+                    outputs=set(self._parse_outputs(stdout.decode()))
+                )
+                return True
+            else:
+                self.logger.error(
+                    f"Task {task.name} failed: {stderr.decode()}"
+                )
+                await self.update_task_status(
+                    task.name,
+                    TaskStatus.FAILED
+                )
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error processing task {task.name}: {e}")
+            await self.update_task_status(task.name, TaskStatus.FAILED)
+            return False
 
     async def get_next_tasks(self) -> List[Task]:
         """Get the next available tasks that are ready to be processed.
+        
+        This method selects tasks that:
+        1. Are in PENDING status
+        2. Have all dependencies completed
+        3. Are not currently being processed
+        4. Fit within our parallel processing limit
         
         Returns:
             List of tasks that can be processed in parallel
@@ -175,70 +259,18 @@ class TaskQueue:
             self.save_queue()
             return selected_tasks
 
-    async def run_queue(self) -> None:
-        """Run the task queue as a background process.
-        
-        This method will continuously process tasks in the queue
-        until all tasks are completed or the process is stopped.
-        """
-        self.running = True
-        self.logger.info("Starting task queue processing")
-        
-        try:
-            while self.running and self._has_pending_tasks():
-                # Get next available tasks
-                tasks = await self.get_next_tasks()
-                
-                if not tasks:
-                    # No tasks available, wait briefly
-                    await asyncio.sleep(1)
-                    continue
-                
-                # Process tasks in parallel
-                self.logger.info(f"Processing {len(tasks)} tasks")
-                results = await asyncio.gather(
-                    *[self.process_task(task) for task in tasks],
-                    return_exceptions=True
-                )
-                
-                # Remove completed tasks from current set
-                async with self.process_lock:
-                    for task in tasks:
-                        self.current_tasks.remove(task.name)
-                
-                # Handle any errors
-                for task, result in zip(tasks, results):
-                    if isinstance(result, Exception):
-                        self.logger.error(
-                            f"Task {task.name} failed with error: {result}"
-                        )
-                        
-            self.logger.info("Task queue processing completed")
-            
-        except Exception as e:
-            self.logger.error(f"Queue processing error: {e}")
-            self.running = False
-            raise
-            
-    def _handle_shutdown(self, signum, frame):
-        """Handle shutdown signals gracefully."""
-        self.logger.info("Shutdown signal received")
-        self.running = False
-        
     def _has_pending_tasks(self) -> bool:
         """Check if there are any pending tasks."""
         return any(
             task.status == TaskStatus.PENDING
             for task in self.tasks.values()
         )
-        
-    def _parse_outputs(self, output: str) -> List[str]:
-        """Parse output files from gptme output."""
-        # Implement parsing logic here
-        return []
-            
+
     def _are_dependencies_met(self, task: Task) -> bool:
         """Check if all dependencies for a task are completed.
+        
+        This method verifies that all tasks this task depends on have been
+        successfully completed.
         
         Args:
             task: Task to check
@@ -252,61 +284,34 @@ class TaskQueue:
             if dep in self.tasks
         )
 
-    async def process_task(self, task: Task) -> bool:
-        """Process a single task using gptme.
+    def _parse_outputs(self, output: str) -> List[str]:
+        """Parse output files from gptme output.
+        
+        Extracts file paths from gptme's output to track what files were
+        created or modified.
         
         Args:
-            task: Task to process
+            output: The stdout from gptme
             
         Returns:
-            bool: True if task was processed successfully
+            List of file paths mentioned in the output
         """
-        try:
-            # Get template for task
-            template = TaskTemplates.get_template(task.template_type.value)
-            
-            # Build command context
-            context_files = ["system_context.md"]
-            if task.context_paths:
-                context_files.extend(task.context_paths)
-                
-            # Build gptme command
-            context_args = " ".join(f"-c {path}" for path in context_files)
-            prompt = template.apply_template(task_description=task.description)
-            cmd = f"gptme '{prompt}' {context_args}"
-            
-            # Run command asynchronously
-            process = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            stdout, stderr = await process.communicate()
-            
-            if process.returncode == 0:
-                # Update task status
-                await self.update_task_status(
-                    task.name,
-                    TaskStatus.COMPLETED,
-                    outputs=set(self._parse_outputs(stdout.decode()))
-                )
-                return True
-            else:
-                self.logger.error(
-                    f"Task {task.name} failed: {stderr.decode()}"
-                )
-                await self.update_task_status(
-                    task.name,
-                    TaskStatus.FAILED
-                )
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"Error processing task {task.name}: {e}")
-            await self.update_task_status(task.name, TaskStatus.FAILED)
-            return False
-            
+        files = []
+        for line in output.splitlines():
+            if line.startswith("Created file:") or line.startswith("Modified file:"):
+                files.append(line.split(":", 1)[1].strip())
+        return files
+
+    def add_task(self, task: Task) -> None:
+        """Add a task to the queue.
+        
+        Args:
+            task: Task to add
+        """
+        self.logger.info(f"Adding task: {task.name}")
+        self.tasks[task.name] = task
+        self.save_queue()
+
     async def update_task_status(
         self,
         task_name: str,
@@ -364,41 +369,35 @@ class TaskQueue:
             self.logger.error(f"Failed to save queue: {e}")
 
     def get_task_status(self, task_name: str) -> Optional[TaskStatus]:
-        """Get current status of a task.
-        
-        Args:
-            task_name: Name of task to check
-
-        Returns:
-            TaskStatus if task exists, None otherwise
-        """
+        """Get current status of a task."""
         task = self.tasks.get(task_name)
         return task.status if task else None
 
     def get_dependent_tasks(self, task_name: str) -> Set[str]:
-        """Get names of all tasks that depend on the given task.
-        
-        Args:
-            task_name: Task to check
-
-        Returns:
-            Set of task names that depend on this task
-        """
+        """Get names of all tasks that depend on the given task."""
         return {
             name for name, task in self.tasks.items()
             if task_name in task.dependencies
         }
 
     def add_context_to_task(self, task_name: str, context_path: str) -> None:
-        """Add a context file path to a task.
-        
-        Args:
-            task_name: Name of task to update
-            context_path: Path to add to task's context
-        """
+        """Add a context file path to a task."""
         if task_name not in self.tasks:
             self.logger.error(f"Task not found: {task_name}")
             return
             
         self.tasks[task_name].context_paths.add(context_path)
         self.save_queue()
+
+    async def stop(self) -> None:
+        """Gracefully stop the queue processing.
+        
+        Waits for current tasks to complete before stopping.
+        """
+        self.logger.info("Initiating graceful shutdown")
+        self.shutdown_event.set()
+        if self.current_tasks:
+            self.logger.info(f"Waiting for {len(self.current_tasks)} tasks to complete")
+            while self.current_tasks:
+                await asyncio.sleep(0.5)
+        self.logger.info("Shutdown complete")
