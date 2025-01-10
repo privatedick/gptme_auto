@@ -1,0 +1,2 @@
+/opt/conda
+/opt/conda/envs/lite_env

@@ -1,0 +1,22 @@
+status: 200
+date: Thu, 26 Sep 2024 22:41:57 GMT
+server: gunicorn
+x-powered-by: Zope (www.zope.org), Python (www.python.org)
+content-security-policy: frame-ancestors 'self';
+content-type: application/json
+strict-transport-security: max-age=15552000
+vary: Accept,Accept-Encoding
+x-content-type-options: nosniff
+x-frame-options: SAMEORIGIN
+x-launchpad-revision: 1b1ed1ad2dbfc71ee62b5c5491c975135a771bf0
+x-lazr-notifications: []
+x-xss-protection: 1; mode=block
+x-vcs-revision: 1b1ed1ad2dbfc71ee62b5c5491c975135a771bf0
+x-request-id: d205cdec-ed08-4440-8471-084a5f22354d
+content-length: 1694
+-content-encoding: gzip
+content-location: https://api.launchpad.net/devel/~ubuntugis?name=%22ubuntugis-unstable%22&ws.op=getPPAByName
+-varied-accept: application/json
+-varied-accept-encoding: gzip, deflate
+
+{"self_link": "https://api.launchpad.net/devel/~ubuntugis/+archive/ubuntu/ubuntugis-unstable", "web_link": "https://launchpad.net/~ubuntugis/+archive/ubuntu/ubuntugis-unstable", "resource_type_link": "https://api.launchpad.net/devel/#archive", "owner_link": "https://api.launchpad.net/devel/~ubuntugis", "name": "ubuntugis-unstable", "displayname": "ubuntugis-unstable", "reference": "~ubuntugis/ubuntu/ubuntugis-unstable", "distribution_link": "https://api.launchpad.net/devel/ubuntu", "private": false, "suppress_subscription_notifications": false, "dependencies_collection_link": "https://api.launchpad.net/devel/~ubuntugis/+archive/ubuntu/ubuntugis-unstable/dependencies", "description": "Unstable releases of Ubuntu GIS packages. These releases are more bleeding edge and while generally they should work well, they dont receive the same amount of quality assurance as our stable releases do.", "signing_key_fingerprint": "2EC86B48E6A9F326623CD22FFF0E7BBEC491C6A1", "require_virtualized": true, "build_debug_symbols": true, "publish_debug_symbols": true, "permit_obsolete_series_uploads": false, "authorized_size": 16384, "status": "Active", "external_dependencies": null, "metadata_overrides": null, "processors_collection_link": "https://api.launchpad.net/devel/~ubuntugis/+archive/ubuntu/ubuntugis-unstable/processors", "enabled_restricted_processors_collection_link": "https://api.launchpad.net/devel/~ubuntugis/+archive/ubuntu/ubuntugis-unstable/enabled_restricted_processors", "publishing_method": "Local", "repository_format": "Debian", "publish": true, "relative_build_score": 0, "http_etag": "\"4addce9b5d384452a3facb283f8786ee6b54e4f7-144d9857290754d2b2248ba6346e0aab9e5f681b\""}

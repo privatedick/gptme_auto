@@ -1,0 +1,1817 @@
+# task_queue.json
+
+
+{
+  "project_structure": {
+    "name": "project_structure",
+    "description": "Create the initial project structure with Poetry:\n- Define project metadata\n- Configure dependencies\n- Setup development tools\n- Create basic directory structure\n\nKey requirements:\n- Use Poetry for dependency management\n- Include essential development dependencies\n- Configure code quality tools\n- Setup logging directory",
+    "template_type": "description",
+    "priority": 10,
+    "status": "failed",
+    "context_paths": [],
+    "dependencies": [],
+    "created_at": "2024-10-04T12:00:00",
+    "completed_at": null,
+    "outputs": [],
+    "metadata": {}
+  }
+}# pyproject.toml
+
+
+[tool.poetry]
+name = "gptme-auto"  # Projektets namn
+version = "0.1.0"  # Version av ditt projekt
+description = "A project that automates GPT-based tasks"
+authors = ["Your Name <you@example.com>"]
+license = "MIT"  # Du kan ändra detta beroende på vilken licens du använder
+
+# Specifierar att projektet finns i katalogen "src"
+packages = [
+    { include = "src" }
+]
+
+[tool.poetry.dependencies]
+# Lägg till eventuella beroenden här
+python = "^3.12"  # Ange Python-versionen som ditt projekt kräver
+
+# Exempel på beroenden:
+pick = "^1.1.0"  # För att hantera val i terminalen, som i ditt fall
+requests = "^2.26.0"  # Om du använder requests för API-anrop eller webbsökningar
+# Lägg till fler beroenden här vid behov
+loguru = "^0.7.3"
+
+[tool.poetry.dev-dependencies]
+# Lägg till utvecklingsberoenden här, som tester eller byggverktyg
+pytest = "^7.1.2"  # Om du använder pytest för tester
+black = "^21.12b0"  # Om du använder Black för kodformattering
+flake8 = "^4.0.1"  # Om du använder Flake8 för statisk kodanalys
+
+[build-system]
+# Dessa inställningar behövs för att bygga och installera paketet korrekt
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+# README.md
+
+
+automate tasks
+# gptme.toml
+
+
+# Configuration for AI-assisted development system
+
+[gptme]
+default_model = "gemini-2-0-flash-thinking-exp"
+worker_model = "gemini-2-0-experimental"
+supervisor_model = "gemini-2-0-flash-thinking-exp"
+
+[env]
+GEMINI_API_KEY = { env = "GEMINI_API_KEY" }
+ANTHROPIC_API_KEY = { env = "ANTHROPIC_API_KEY" }
+
+[models.gemini-2-0-flash-thinking-exp]
+provider = "google"
+model = "gemini-2.0-flash-thinking-exp"
+max_tokens = 8192
+temperature = 0.7
+max_calls_per_minute = 15
+max_input_tokens = 32000
+role = ["supervisor", "analysis", "review"]
+priority_tasks = ["architecture", "code_review", "optimization"]
+
+[models.gemini-2-0-experimental]
+provider = "google"
+model = "gemini-2.0-experimental"
+max_tokens = 1000000
+temperature = 0.7
+max_calls_per_minute = 15
+max_input_tokens = 1000000
+role = ["worker", "bulk_processing"]
+priority_tasks = ["implementation", "documentation", "testing"]
+
+[workflow]
+parallel_tasks = 3
+task_timeout = 300  # seconds
+retry_attempts = 3
+quality_check_frequency = 5  # Check every N tasks
+use_supervisor = true
+
+[workflow.quality]
+supervisor_model = "gemini-2-0-flash-thinking-exp"
+review_percentage = 20  # Review 20% of tasks
+critical_paths = ["security", "core_functionality", "data_handling"]
+
+[context]
+include = ["src/**/*.py", "tests/**/*.py", "*.md"]
+exclude = [
+    "venv/**",
+    ".git/**",
+    "__pycache__/**",
+    "*.pyc",
+    "*.pyo",
+    "*.pyd",
+    ".DS_Store"
+]
+cache_enabled = true
+cache_ttl = 3600  # seconds
+max_context_size = 30000  # tokens
+
+[context.templates]
+path = "templates/"
+priority_files = ["system_context.md", "architecture.md"]
+
+[tools]
+enabled = ["read", "save", "shell", "python", "git", "lint", "queue"]
+auto_format = true
+auto_lint = true
+
+[tools.queue]
+enabled = true
+storage = "task_queue.json"
+max_parallel = 3
+status_file = "queue_status.json"
+
+[tools.git]
+allowed_commands = ["checkout", "commit", "push", "pull", "branch", "status"]
+branch_prefix = "ai-dev"
+auto_commit = true
+commit_template = "feat: {description}"
+
+[tools.shell]
+allowed_commands = ["ruff", "mypy", "pytest", "black", "git", "poetry"]
+execute_command = true
+
+[tools.python]
+venv_path = ".venv"
+requirements_file = "pyproject.toml"
+package_manager = "poetry"
+
+[logging]
+level = "info"
+format = "{timestamp} - {level} - {message}"
+file = "gptme.log"
+rotate = true
+max_size = 10485760  # 10MB
+backup_count = 5
+
+[monitoring]
+enabled = true
+metrics_file = "metrics.json"
+alert_on_failure = true
+performance_tracking = true
+
+[security]
+allow_file_write = true
+allowed_directories = ["src", "tests"]
+restricted_files = ["config/*.toml", "secrets.env"]
+
+[model_management]
+auto_switch = true
+switch_criteria = "cost"
+# run_queue.py
+
+
+#!/usr/bin/env python3
+from pathlib import Path
+import asyncio
+from src.task_queue import TaskQueue, initialize_queue
+
+async def main():
+    queue_file = Path("task_queue.json")
+    # Initiera kön om den inte redan finns
+    if not queue_file.exists():
+        initialize_queue(queue_file)
+    
+    # Skapa och starta kön som bakgrundsprocess
+    queue = TaskQueue(queue_file, max_parallel=3)
+    await queue.run_queue()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+# src/task_queue.py
+
+
+"""Task queue system for AI-assisted development.
+
+This module provides a task queue system designed specifically for managing
+AI-assisted development tasks. It supports task dependencies, parallel processing,
+and automatic task execution using GPTme.
+"""
+
+import asyncio
+import json
+import logging
+from dataclasses import dataclass, field, asdict
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from typing import Dict, List, Optional, Set
+
+from .task_templates import TaskTemplates, Template
+
+
+class TaskStatus(Enum):
+    """Possible states for a task."""
+
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class TemplateType(Enum):
+    """Standard template types for tasks."""
+
+    DESCRIPTION = "description"  # Initial task description
+    ANALYSIS = "analysis"  # Detailed analysis
+    CODE = "code"  # Code generation
+    OPTIMIZE = "optimize"  # Code optimization
+    DOCUMENT = "document"  # Documentation
+    TEST = "test"  # Test generation
+    REVIEW = "review"  # Code review
+    IMPROVE = "improve"  # General improvements
+
+
+@dataclass
+class Task:
+    """Represents a single task in the queue.
+
+    Attributes:
+        name: Unique task identifier
+        description: Task description for the AI
+        template_type: Type of template to use
+        priority: Task priority (lower number = higher priority)
+        status: Current task status
+        context_paths: Paths to files needed for context
+        dependencies: Names of tasks this task depends on
+        created_at: When the task was created
+        completed_at: When the task was completed
+        outputs: Paths to files created by this task
+        metadata: Additional task information
+    """
+
+    name: str
+    description: str
+    template_type: TemplateType
+    priority: int = 100
+    status: TaskStatus = field(default=TaskStatus.PENDING)
+    context_paths: Set[str] = field(default_factory=set)
+    dependencies: Set[str] = field(default_factory=set)
+    created_at: datetime = field(default_factory=datetime.now)
+    completed_at: Optional[datetime] = None
+    outputs: Set[str] = field(default_factory=set)
+    metadata: Dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        """Convert task to dictionary for storage."""
+        data = asdict(self)
+        # Convert enums and sets to strings for JSON serialization
+        data["template_type"] = self.template_type.value
+        data["status"] = self.status.value
+        data["context_paths"] = list(self.context_paths)
+        data["dependencies"] = list(self.dependencies)
+        data["outputs"] = list(self.outputs)
+        # Convert datetime objects to ISO format strings
+        data["created_at"] = self.created_at.isoformat()
+        if self.completed_at:
+            data["completed_at"] = self.completed_at.isoformat()
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Task":
+        """Create task from dictionary."""
+        # Convert string values back to enums
+        data["template_type"] = TemplateType(data["template_type"])
+        data["status"] = TaskStatus(data["status"])
+        # Convert lists back to sets
+        data["context_paths"] = set(data["context_paths"])
+        data["dependencies"] = set(data["dependencies"])
+        data["outputs"] = set(data["outputs"])
+        # Convert ISO format strings back to datetime objects
+        data["created_at"] = datetime.fromisoformat(data["created_at"])
+        if data.get("completed_at"):
+            data["completed_at"] = datetime.fromisoformat(data["completed_at"])
+        return cls(**data)
+
+
+class TaskQueue:
+    """Manages a queue of tasks for AI-assisted development.
+
+    This class handles task organization, dependencies, and persistence.
+    It ensures tasks are processed in the correct order while maintaining
+    their relationships and context requirements.
+    """
+
+    def __init__(self, queue_file: Path, max_parallel: int = 3):
+        """Initialize task queue.
+
+        Args:
+            queue_file: Path to file for storing queue
+            max_parallel: Maximum number of parallel tasks
+        """
+        self.queue_file = queue_file
+        self.tasks: Dict[str, Task] = {}
+        self.logger = self._setup_logger()
+        self.max_parallel = max_parallel
+        self.shutdown_event = asyncio.Event()
+        self.current_tasks: Set[str] = set()
+        self.process_lock = asyncio.Lock()
+        self.load_queue()
+
+    def _setup_logger(self) -> logging.Logger:
+        """Configure logging for the task queue."""
+        logger = logging.getLogger("TaskQueue")
+        logger.setLevel(logging.INFO)
+        handler = logging.StreamHandler()
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        )
+        logger.addHandler(handler)
+        return logger
+
+    async def run_queue(self) -> None:
+        """Run the task queue processing.
+
+        This method will continuously process tasks until all are completed
+        or the queue is stopped.
+        """
+        try:
+            self.logger.info("Starting task queue processing")
+
+            while not self.shutdown_event.is_set() and self._has_pending_tasks():
+                tasks = await self.get_next_tasks()
+
+                if not tasks:
+                    await asyncio.sleep(1)
+                    continue
+
+                self.logger.info(f"Processing {len(tasks)} tasks")
+                results = await asyncio.gather(
+                    *[self.process_task(task) for task in tasks], return_exceptions=True
+                )
+
+                async with self.process_lock:
+                    for task in tasks:
+                        self.current_tasks.remove(task.name)
+
+                for task, result in zip(tasks, results):
+                    if isinstance(result, Exception):
+                        self.logger.error(
+                            f"Task {task.name} failed with error: {result}"
+                        )
+
+            self.logger.info("Task queue processing completed")
+
+        except Exception as e:
+            self.logger.error(f"Queue processing error: {e}")
+            raise
+        finally:
+            self.save_queue()
+
+    async def process_task(self, task: Task) -> bool:
+        """Process a single task using gptme.
+
+        Args:
+            task: Task to process
+
+        Returns:
+            bool: True if task was processed successfully
+        """
+        try:
+            template = TaskTemplates.get_template(task.template_type.value)
+
+            context_files = ["system_context.md"]
+            if task.context_paths:
+                context_files.extend(task.context_paths)
+
+            context_args = " ".join(f"-c {path}" for path in context_files)
+            prompt = template.apply_template(task_description=task.description)
+            cmd = f"poetry run gptme '{prompt}' {context_args}"
+
+            process = await asyncio.create_subprocess_shell(
+                cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+
+            stdout, stderr = await process.communicate()
+
+            if process.returncode == 0:
+                await self.update_task_status(
+                    task.name,
+                    TaskStatus.COMPLETED,
+                    outputs=set(self._parse_outputs(stdout.decode())),
+                )
+                return True
+            else:
+                self.logger.error(f"Task {task.name} failed: {stderr.decode()}")
+                await self.update_task_status(task.name, TaskStatus.FAILED)
+                return False
+
+        except Exception as e:
+            self.logger.error(f"Error processing task {task.name}: {e}")
+            await self.update_task_status(task.name, TaskStatus.FAILED)
+            return False
+
+    async def get_next_tasks(self) -> List[Task]:
+        """Get the next available tasks that are ready to be processed.
+
+        This method selects tasks that:
+        1. Are in PENDING status
+        2. Have all dependencies completed
+        3. Are not currently being processed
+        4. Fit within our parallel processing limit
+
+        Returns:
+            List of tasks that can be processed in parallel
+        """
+        async with self.process_lock:
+            ready_tasks = [
+                task
+                for task in self.tasks.values()
+                if task.status == TaskStatus.PENDING
+                and self._are_dependencies_met(task)
+                and task.name not in self.current_tasks
+            ]
+
+            if not ready_tasks:
+                return []
+
+            # Sort by priority and return up to max_parallel tasks
+            tasks = sorted(ready_tasks, key=lambda t: t.priority)
+            available_slots = self.max_parallel - len(self.current_tasks)
+            selected_tasks = tasks[:available_slots]
+
+            # Mark tasks as in progress
+            for task in selected_tasks:
+                self.current_tasks.add(task.name)
+                task.status = TaskStatus.IN_PROGRESS
+
+            self.save_queue()
+            return selected_tasks
+
+    def _has_pending_tasks(self) -> bool:
+        """Check if there are any pending tasks."""
+        return any(task.status == TaskStatus.PENDING for task in self.tasks.values())
+
+    def _are_dependencies_met(self, task: Task) -> bool:
+        """Check if all dependencies for a task are completed.
+
+        This method verifies that all tasks this task depends on have been
+        successfully completed.
+
+        Args:
+            task: Task to check
+
+        Returns:
+            bool: True if all dependencies are completed
+        """
+        return all(
+            self.tasks[dep].status == TaskStatus.COMPLETED
+            for dep in task.dependencies
+            if dep in self.tasks
+        )
+
+    def _parse_outputs(self, output: str) -> List[str]:
+        """Parse output files from gptme output.
+
+        Extracts file paths from gptme's output to track what files were
+        created or modified.
+
+        Args:
+            output: The stdout from gptme
+
+        Returns:
+            List of file paths mentioned in the output
+        """
+        files = []
+        for line in output.splitlines():
+            if line.startswith("Created file:") or line.startswith("Modified file:"):
+                files.append(line.split(":", 1)[1].strip())
+        return files
+
+    def add_task(self, task: Task) -> None:
+        """Add a task to the queue.
+
+        Args:
+            task: Task to add
+        """
+        self.logger.info(f"Adding task: {task.name}")
+        self.tasks[task.name] = task
+        self.save_queue()
+
+    async def update_task_status(
+        self, task_name: str, status: TaskStatus, outputs: Optional[Set[str]] = None
+    ) -> None:
+        """Update task status and optional outputs.
+
+        Args:
+            task_name: Name of task to update
+            status: New status
+            outputs: Optional set of output file paths
+        """
+        if task_name not in self.tasks:
+            self.logger.error(f"Task not found: {task_name}")
+            return
+
+        task = self.tasks[task_name]
+        task.status = status
+
+        if outputs:
+            task.outputs.update(outputs)
+
+        if status == TaskStatus.COMPLETED:
+            task.completed_at = datetime.now()
+
+        self.logger.info(f"Updated task {task_name} to {status.value}")
+        self.save_queue()
+
+    def load_queue(self) -> None:
+        """Load queue from file."""
+        if not self.queue_file.exists():
+            return
+
+        try:
+            data = json.loads(self.queue_file.read_text())
+            self.tasks = {
+                name: Task.from_dict(task_data) for name, task_data in data.items()
+            }
+            self.logger.info(f"Loaded {len(self.tasks)} tasks from {self.queue_file}")
+        except Exception as e:
+            self.logger.error(f"Failed to load queue: {e}")
+
+    def save_queue(self) -> None:
+        """Save queue to file."""
+        try:
+            data = {name: task.to_dict() for name, task in self.tasks.items()}
+            self.queue_file.write_text(json.dumps(data, indent=2))
+            self.logger.info(f"Saved {len(self.tasks)} tasks to {self.queue_file}")
+        except Exception as e:
+            self.logger.error(f"Failed to save queue: {e}")
+
+    def get_task_status(self, task_name: str) -> Optional[TaskStatus]:
+        """Get current status of a task."""
+        task = self.tasks.get(task_name)
+        return task.status if task else None
+
+    def get_dependent_tasks(self, task_name: str) -> Set[str]:
+        """Get names of all tasks that depend on the given task."""
+        return {
+            name for name, task in self.tasks.items() if task_name in task.dependencies
+        }
+
+    def add_context_to_task(self, task_name: str, context_path: str) -> None:
+        """Add a context file path to a task."""
+        if task_name not in self.tasks:
+            self.logger.error(f"Task not found: {task_name}")
+            return
+
+        self.tasks[task_name].context_paths.add(context_path)
+        self.save_queue()
+
+    async def stop(self) -> None:
+        """Gracefully stop the queue processing.
+
+        Waits for current tasks to complete before stopping.
+        """
+        self.logger.info("Initiating graceful shutdown")
+        self.shutdown_event.set()
+        if self.current_tasks:
+            self.logger.info(f"Waiting for {len(self.current_tasks)} tasks to complete")
+            while self.current_tasks:
+                await asyncio.sleep(0.5)
+        self.logger.info("Shutdown complete")
+# src/task_templates.py
+
+
+"""Template system for AI task generation.
+
+This module provides a collection of templates that guide AI models in performing
+various development tasks. Each template is designed to produce consistent,
+high-quality outputs while maintaining clarity and focus.
+"""
+
+from dataclasses import dataclass
+from typing import Optional, Dict, Any
+
+
+@dataclass
+class Template:
+    """A template for generating AI instructions.
+
+    Attributes:
+        name: Template identifier
+        description: What this template is used for
+        prompt: The template text with placeholders
+        examples: Optional example usage
+    """
+    name: str
+    description: str
+    prompt: str
+    examples: Optional[str] = None
+
+    def apply_template(self, **kwargs) -> str:
+        """Apply the template with provided parameters.
+        
+        Args:
+            **kwargs: Template parameters to insert
+            
+        Returns:
+            str: Formatted template text with parameters inserted
+            
+        Raises:
+            ValueError: If required parameters are missing
+        """
+        try:
+            return self.prompt.format(**kwargs)
+        except KeyError as e:
+            missing_key = str(e).strip("'")
+            raise ValueError(
+                f"Missing required template parameter: {missing_key}"
+            ) from e
+
+
+class TaskTemplates:
+    """Collection of task templates for different purposes."""
+
+    # Template for initial task description and analysis
+    DESCRIPTION = Template(
+        name="description",
+        description="Initial analysis and breakdown of a task",
+        prompt="""
+Analyze and describe how to implement the following task in a Python project:
+
+{task_description}
+
+Your analysis should include:
+
+1. Core Functionality:
+   - Main components needed
+   - Key features to implement
+   - Essential algorithms or data structures
+
+2. Implementation Strategy:
+   - Development sequence
+   - Component interactions
+   - Integration points
+   - Error handling approach
+
+3. Technical Considerations:
+   - Required dependencies
+   - Performance factors
+   - Security considerations
+   - Testing requirements
+
+4. Architecture & Design:
+   - Module organization
+   - Class/function structure
+   - Interface designs
+   - Data flow patterns
+
+Focus on creating a solution that is:
+- Maintainable and well-documented
+- Secure and robust
+- Efficient and scalable
+- Easy to test and extend
+
+Provide a clear, structured plan for implementing this task."""
+    )
+
+    # Template for code generation
+    CODE = Template(
+        name="code",
+        description="Generate implementation code",
+        prompt="""
+Write Python code to implement:
+
+{task_description}
+
+Requirements:
+1. Code Quality:
+   - Follow PEP 8 style guide
+   - Use clear, descriptive names
+   - Keep functions focused and modular
+   - Include comprehensive docstrings (PEP 257)
+
+2. Technical Requirements:
+   - Use type hints for clarity
+   - Implement proper error handling
+   - Add input validation
+   - Include logging where appropriate
+
+3. Design Patterns:
+   - Use appropriate design patterns
+   - Follow SOLID principles
+   - Keep code DRY
+   - Make interfaces clear
+
+4. Testing & Maintenance:
+   - Write testable code
+   - Consider edge cases
+   - Add helpful comments
+   - Make error messages clear
+
+The implementation should be production-ready and well-documented."""
+    )
+
+    # Template for test generation
+    TEST = Template(
+        name="test",
+        description="Generate test code",
+        prompt="""
+Create comprehensive tests for:
+
+{task_description}
+
+Test Suite Requirements:
+
+1. Unit Tests:
+   - Test each component in isolation
+   - Cover all public interfaces
+   - Include edge cases
+   - Test error conditions
+
+2. Integration Tests:
+   - Test component interactions
+   - Verify data flow
+   - Test system behaviors
+   - Check error propagation
+
+3. Test Organization:
+   - Use clear test names
+   - Group related tests
+   - Include setup/teardown
+   - Document test purposes
+
+4. Quality Checks:
+   - Ensure high coverage
+   - Test error handling
+   - Verify performance
+   - Validate outputs
+
+Use pytest fixtures and parameterization where appropriate."""
+    )
+
+    # Template for documentation
+    DOCUMENT = Template(
+        name="document",
+        description="Generate documentation",
+        prompt="""
+Create comprehensive documentation for:
+
+{task_description}
+
+Documentation Sections:
+
+1. Overview:
+   - Purpose and goals
+   - Key features
+   - Main components
+   - System architecture
+
+2. Technical Details:
+   - Implementation specifics
+   - API documentation
+   - Data structures
+   - Algorithms used
+
+3. Usage Guide:
+   - Installation steps
+   - Configuration options
+   - Common use cases
+   - Best practices
+
+4. Development Guide:
+   - Setup instructions
+   - Contributing guidelines
+   - Testing procedures
+   - Deployment process
+
+Follow Google-style Python docstring format."""
+    )
+
+    # Template for optimization tasks
+    OPTIMIZE = Template(
+        name="optimize",
+        description="Optimize existing code",
+        prompt="""
+Review and optimize this code:
+
+{task_description}
+
+Focus Areas:
+
+1. Performance:
+   - Algorithm efficiency
+   - Resource usage
+   - Memory management
+   - Processing speed
+
+2. Code Quality:
+   - Readability
+   - Maintainability
+   - Best practices
+   - Documentation
+
+3. Reliability:
+   - Error handling
+   - Edge cases
+   - Resource cleanup
+   - Thread safety
+
+4. Architecture:
+   - Code organization
+   - Design patterns
+   - Dependency management
+   - Interface design
+
+Provide clear explanations for optimization choices."""
+    )
+
+    # Template for review tasks
+    REVIEW = Template(
+        name="review",
+        description="Review and analyze code",
+        prompt="""
+Review this code and provide analysis:
+
+{task_description}
+
+Review Criteria:
+
+1. Code Quality:
+   - PEP 8 compliance
+   - Documentation quality
+   - Naming conventions
+   - Code organization
+
+2. Technical Analysis:
+   - Algorithm choices
+   - Performance implications
+   - Security considerations
+   - Resource management
+
+3. Architecture Review:
+   - Design patterns
+   - Component coupling
+   - Interface design
+   - Error handling
+
+4. Improvement Suggestions:
+   - Optimization opportunities
+   - Better approaches
+   - Missing features
+   - Security enhancements
+
+Provide specific, actionable feedback."""
+    )
+
+    @classmethod
+    def get_template(cls, template_type: str) -> Template:
+        """Get template by type.
+        
+        Args:
+            template_type: Type of template to retrieve
+            
+        Returns:
+            Template instance
+            
+        Raises:
+            ValueError: If template type not found
+        """
+        template = getattr(cls, template_type.upper(), None)
+        if not template:
+            raise ValueError(f"Unknown template type: {template_type}")
+        return template
+# src/system_context.md
+
+
+# System Design Context and Principles
+
+## System Philosophy
+This system is designed to be a robust, secure, and user-friendly toolkit for AI-assisted development. Every component should reflect these core principles:
+
+### Architectural Values
+- Safety First: All operations must be non-destructive and recoverable
+- Clarity Over Cleverness: Clear, maintainable code is preferred over complex optimizations
+- Progressive Disclosure: Simple interface for basic usage, with power features available when needed
+- Defensive Programming: Assume inputs may be invalid and handle errors gracefully
+
+### Code Design Principles
+
+#### Component Structure
+Every major component should follow this pattern:
+```python
+class ComponentName:
+    """Component purpose and responsibility summary.
+    
+    This class handles a specific area of functionality and maintains
+    clear boundaries with other components. It follows the single
+    responsibility principle and uses dependency injection.
+    
+    Attributes:
+        attr_name: Description of what this attribute represents
+        other_attr: Description of another attribute
+    """
+    
+    def __init__(self, *dependencies):
+        """Initialize with required dependencies.
+        
+        Args:
+            dependencies: Other components this one needs
+        """
+        self.logger = self._setup_logging()  # Always include logging
+        self._validate_dependencies(dependencies)
+        self._initialize_state()
+    
+    def _setup_logging(self) -> logging.Logger:
+        """Configure component-specific logging."""
+        return get_logger(__name__)
+
+    async def operation(self, input_data: InputType) -> ResultType:
+        """Template for typical async operation.
+        
+        Operations should:
+        1. Validate inputs
+        2. Log major steps
+        3. Handle errors gracefully
+        4. Return well-defined types
+        """
+        try:
+            self._validate_input(input_data)
+            self.logger.info(f"Starting {operation.__name__}")
+            result = await self._perform_operation(input_data)
+            self.logger.info(f"Completed {operation.__name__}")
+            return result
+        except Exception as e:
+            self.logger.error(f"Operation failed: {e}")
+            raise OperationError(f"Failed to {operation.__name__}: {e}") from e
+```
+
+#### Error Handling
+Every error case should be handled explicitly:
+- Use custom exception classes for different error types
+- Include context in error messages
+- Log errors with appropriate detail
+- Provide recovery paths where possible
+
+#### State Management 
+- Prefer immutable state where possible
+- Use dataclasses for data containers
+- Include validation in state modifications
+- Maintain clear state boundaries
+
+#### Asynchronous Operations
+- Use async/await consistently
+- Handle cancellation gracefully
+- Include timeouts where appropriate
+- Manage resource cleanup properly
+
+### Code Style Conventions
+
+#### Documentation
+Every module must have:
+- Module docstring explaining purpose
+- Class/function docstrings with:
+  - Purpose description
+  - Args/returns documentation
+  - Usage examples where helpful
+  - Notes about side effects
+- Inline comments for complex logic
+
+#### Type Annotations
+Use comprehensive type hints:
+```python
+from typing import Optional, List, Dict, Any, TypeVar, Generic
+
+T = TypeVar('T')
+
+class Container(Generic[T]):
+    """Example of proper type annotation usage."""
+    
+    def process(self, items: List[T]) -> Dict[str, Optional[T]]:
+        """Process items with clear type specifications."""
+```
+
+#### Error Classes
+Maintain error hierarchy:
+```python
+class SystemError(Exception):
+    """Base class for system errors."""
+
+class ComponentError(SystemError):
+    """Base class for component-specific errors."""
+
+class OperationError(ComponentError):
+    """Specific operation failure."""
+```
+
+### Integration Patterns
+
+#### Component Communication
+Components should:
+- Accept dependencies via constructor
+- Use abstract base classes/protocols
+- Return rich result objects
+- Handle partial failures
+
+#### Resource Management
+Resources must be:
+- Acquired safely
+- Released reliably
+- Monitored for leaks
+- Rate-limited appropriately
+
+### Testing Requirements
+
+Each component requires:
+- Unit tests for all public methods
+- Integration tests for interactions
+- Property-based tests where applicable
+- Performance tests for critical paths
+
+### Security Considerations
+
+All code must:
+- Validate all inputs
+- Sanitize all outputs
+- Handle sensitive data carefully
+- Maintain access controls
+
+### Performance Guidelines
+
+Optimize for:
+- Consistent performance over peak performance
+- Memory efficiency
+- Resource sharing
+- Graceful degradation
+
+## System Context
+
+### Component Relationships
+Components interact through:
+- Clear interfaces
+- Typed messages
+- Structured events
+- Monitored channels
+
+### State Flow
+Data flows through the system:
+1. Input validation
+2. Processing pipeline
+3. Result verification
+4. State updates
+5. Event notifications
+
+### Error Flow
+Errors are handled by:
+1. Local recovery
+2. Component isolation
+3. System fallback
+4. User notification
+
+## Implementation Notes
+
+When implementing any part of the system:
+1. Start with interface definition
+2. Add comprehensive tests
+3. Implement core functionality
+4. Add error handling
+5. Optimize if needed
+
+Each implementation should:
+- Follow the patterns above
+- Maintain consistency
+- Consider extensions
+- Document decisions
+
+## Technical Decisions
+
+### Python Version
+- Target Python 3.11+
+- Use modern language features
+- Maintain compatibility
+- Document requirements
+
+### Dependencies
+- Minimize external dependencies
+- Use established libraries
+- Pin versions precisely
+- Document purpose of each
+
+### Configuration
+- Use YAML for configs
+- Support environment overrides
+- Validate all settings
+- Provide defaults
+
+### Logging
+- Use structured logging
+- Include context IDs
+- Support different levels
+- Enable filtering
+# src/__init__.py
+
+
+# .ruff_cache/CACHEDIR.TAG
+
+
+Signature: 8a477f597d28d172789f06886806bc55# .ruff_cache/.gitignore
+
+
+# Automatically created by ruff.
+*
+# .ruff_cache/0.8.4/8382219808942781633
+
+
+&       /home/userland/projects/gptme_auto/src       
+       task_queue.pyl-DÏxaó÷úO                UnusedImport.       `.task_templates.Template` imported but unused0       Remove unused import: `.task_templates.Template`  
+         ×  
+  )       from .task_templates import TaskTemplates        5      """Task queue system for AI-assisted development.
+
+This module provides a task queue system designed specifically for managing
+AI-assisted development tasks. It supports task dependencies, parallel processing,
+and automatic task execution using GPTme.
+"""
+
+import asyncio
+import json
+import logging
+from dataclasses import dataclass, field, asdict
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from typing import Dict, List, Optional, Set
+
+from .task_templates import TaskTemplates, Template
+
+
+class TaskStatus(Enum):
+    """Possible states for a task."""
+
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class TemplateType(Enum):
+    """Standard template types for tasks."""
+
+    DESCRIPTION = "description"  # Initial task description
+    ANALYSIS = "analysis"  # Detailed analysis
+    CODE = "code"  # Code generation
+    OPTIMIZE = "optimize"  # Code optimization
+    DOCUMENT = "document"  # Documentation
+    TEST = "test"  # Test generation
+    REVIEW = "review"  # Code review
+    IMPROVE = "improve"  # General improvements
+
+
+@dataclass
+class Task:
+    """Represents a single task in the queue.
+
+    Attributes:
+        name: Unique task identifier
+        description: Task description for the AI
+        template_type: Type of template to use
+        priority: Task priority (lower number = higher priority)
+        status: Current task status
+        context_paths: Paths to files needed for context
+        dependencies: Names of tasks this task depends on
+        created_at: When the task was created
+        completed_at: When the task was completed
+        outputs: Paths to files created by this task
+        metadata: Additional task information
+    """
+
+    name: str
+    description: str
+    template_type: TemplateType
+    priority: int = 100
+    status: TaskStatus = field(default=TaskStatus.PENDING)
+    context_paths: Set[str] = field(default_factory=set)
+    dependencies: Set[str] = field(default_factory=set)
+    created_at: datetime = field(default_factory=datetime.now)
+    completed_at: Optional[datetime] = None
+    outputs: Set[str] = field(default_factory=set)
+    metadata: Dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        """Convert task to dictionary for storage."""
+        data = asdict(self)
+        # Convert enums and sets to strings for JSON serialization
+        data["template_type"] = self.template_type.value
+        data["status"] = self.status.value
+        data["context_paths"] = list(self.context_paths)
+        data["dependencies"] = list(self.dependencies)
+        data["outputs"] = list(self.outputs)
+        # Convert datetime objects to ISO format strings
+        data["created_at"] = self.created_at.isoformat()
+        if self.completed_at:
+            data["completed_at"] = self.completed_at.isoformat()
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Task":
+        """Create task from dictionary."""
+        # Convert string values back to enums
+        data["template_type"] = TemplateType(data["template_type"])
+        data["status"] = TaskStatus(data["status"])
+        # Convert lists back to sets
+        data["context_paths"] = set(data["context_paths"])
+        data["dependencies"] = set(data["dependencies"])
+        data["outputs"] = set(data["outputs"])
+        # Convert ISO format strings back to datetime objects
+        data["created_at"] = datetime.fromisoformat(data["created_at"])
+        if data.get("completed_at"):
+            data["completed_at"] = datetime.fromisoformat(data["completed_at"])
+        return cls(**data)
+
+
+class TaskQueue:
+    """Manages a queue of tasks for AI-assisted development.
+
+    This class handles task organization, dependencies, and persistence.
+    It ensures tasks are processed in the correct order while maintaining
+    their relationships and context requirements.
+    """
+
+    def __init__(self, queue_file: Path, max_parallel: int = 3):
+        """Initialize task queue.
+
+        Args:
+            queue_file: Path to file for storing queue
+            max_parallel: Maximum number of parallel tasks
+        """
+        self.queue_file = queue_file
+        self.tasks: Dict[str, Task] = {}
+        self.logger = self._setup_logger()
+        self.max_parallel = max_parallel
+        self.shutdown_event = asyncio.Event()
+        self.current_tasks: Set[str] = set()
+        self.process_lock = asyncio.Lock()
+        self.load_queue()
+
+    def _setup_logger(self) -> logging.Logger:
+        """Configure logging for the task queue."""
+        logger = logging.getLogger("TaskQueue")
+        logger.setLevel(logging.INFO)
+        handler = logging.StreamHandler()
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        )
+        logger.addHandler(handler)
+        return logger
+
+    async def run_queue(self) -> None:
+        """Run the task queue processing.
+
+        This method will continuously process tasks until all are completed
+        or the queue is stopped.
+        """
+        try:
+            self.logger.info("Starting task queue processing")
+
+            while not self.shutdown_event.is_set() and self._has_pending_tasks():
+                tasks = await self.get_next_tasks()
+
+                if not tasks:
+                    await asyncio.sleep(1)
+                    continue
+
+                self.logger.info(f"Processing {len(tasks)} tasks")
+                results = await asyncio.gather(
+                    *[self.process_task(task) for task in tasks], return_exceptions=True
+                )
+
+                async with self.process_lock:
+                    for task in tasks:
+                        self.current_tasks.remove(task.name)
+
+                for task, result in zip(tasks, results):
+                    if isinstance(result, Exception):
+                        self.logger.error(
+                            f"Task {task.name} failed with error: {result}"
+                        )
+
+            self.logger.info("Task queue processing completed")
+
+        except Exception as e:
+            self.logger.error(f"Queue processing error: {e}")
+            raise
+        finally:
+            self.save_queue()
+
+    async def process_task(self, task: Task) -> bool:
+        """Process a single task using gptme.
+
+        Args:
+            task: Task to process
+
+        Returns:
+            bool: True if task was processed successfully
+        """
+        try:
+            template = TaskTemplates.get_template(task.template_type.value)
+
+            context_files = ["system_context.md"]
+            if task.context_paths:
+                context_files.extend(task.context_paths)
+
+            context_args = " ".join(f"-c {path}" for path in context_files)
+            prompt = template.apply_template(task_description=task.description)
+            cmd = f"poetry run gptme '{prompt}' {context_args}"
+
+            process = await asyncio.create_subprocess_shell(
+                cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+
+            stdout, stderr = await process.communicate()
+
+            if process.returncode == 0:
+                await self.update_task_status(
+                    task.name,
+                    TaskStatus.COMPLETED,
+                    outputs=set(self._parse_outputs(stdout.decode())),
+                )
+                return True
+            else:
+                self.logger.error(f"Task {task.name} failed: {stderr.decode()}")
+                await self.update_task_status(task.name, TaskStatus.FAILED)
+                return False
+
+        except Exception as e:
+            self.logger.error(f"Error processing task {task.name}: {e}")
+            await self.update_task_status(task.name, TaskStatus.FAILED)
+            return False
+
+    async def get_next_tasks(self) -> List[Task]:
+        """Get the next available tasks that are ready to be processed.
+
+        This method selects tasks that:
+        1. Are in PENDING status
+        2. Have all dependencies completed
+        3. Are not currently being processed
+        4. Fit within our parallel processing limit
+
+        Returns:
+            List of tasks that can be processed in parallel
+        """
+        async with self.process_lock:
+            ready_tasks = [
+                task
+                for task in self.tasks.values()
+                if task.status == TaskStatus.PENDING
+                and self._are_dependencies_met(task)
+                and task.name not in self.current_tasks
+            ]
+
+            if not ready_tasks:
+                return []
+
+            # Sort by priority and return up to max_parallel tasks
+            tasks = sorted(ready_tasks, key=lambda t: t.priority)
+            available_slots = self.max_parallel - len(self.current_tasks)
+            selected_tasks = tasks[:available_slots]
+
+            # Mark tasks as in progress
+            for task in selected_tasks:
+                self.current_tasks.add(task.name)
+                task.status = TaskStatus.IN_PROGRESS
+
+            self.save_queue()
+            return selected_tasks
+
+    def _has_pending_tasks(self) -> bool:
+        """Check if there are any pending tasks."""
+        return any(task.status == TaskStatus.PENDING for task in self.tasks.values())
+
+    def _are_dependencies_met(self, task: Task) -> bool:
+        """Check if all dependencies for a task are completed.
+
+        This method verifies that all tasks this task depends on have been
+        successfully completed.
+
+        Args:
+            task: Task to check
+
+        Returns:
+            bool: True if all dependencies are completed
+        """
+        return all(
+            self.tasks[dep].status == TaskStatus.COMPLETED
+            for dep in task.dependencies
+            if dep in self.tasks
+        )
+
+    def _parse_outputs(self, output: str) -> List[str]:
+        """Parse output files from gptme output.
+
+        Extracts file paths from gptme's output to track what files were
+        created or modified.
+
+        Args:
+            output: The stdout from gptme
+
+        Returns:
+            List of file paths mentioned in the output
+        """
+        files = []
+        for line in output.splitlines():
+            if line.startswith("Created file:") or line.startswith("Modified file:"):
+                files.append(line.split(":", 1)[1].strip())
+        return files
+
+    def add_task(self, task: Task) -> None:
+        """Add a task to the queue.
+
+        Args:
+            task: Task to add
+        """
+        self.logger.info(f"Adding task: {task.name}")
+        self.tasks[task.name] = task
+        self.save_queue()
+
+    async def update_task_status(
+        self, task_name: str, status: TaskStatus, outputs: Optional[Set[str]] = None
+    ) -> None:
+        """Update task status and optional outputs.
+
+        Args:
+            task_name: Name of task to update
+            status: New status
+            outputs: Optional set of output file paths
+        """
+        if task_name not in self.tasks:
+            self.logger.error(f"Task not found: {task_name}")
+            return
+
+        task = self.tasks[task_name]
+        task.status = status
+
+        if outputs:
+            task.outputs.update(outputs)
+
+        if status == TaskStatus.COMPLETED:
+            task.completed_at = datetime.now()
+
+        self.logger.info(f"Updated task {task_name} to {status.value}")
+        self.save_queue()
+
+    def load_queue(self) -> None:
+        """Load queue from file."""
+        if not self.queue_file.exists():
+            return
+
+        try:
+            data = json.loads(self.queue_file.read_text())
+            self.tasks = {
+                name: Task.from_dict(task_data) for name, task_data in data.items()
+            }
+            self.logger.info(f"Loaded {len(self.tasks)} tasks from {self.queue_file}")
+        except Exception as e:
+            self.logger.error(f"Failed to load queue: {e}")
+
+    def save_queue(self) -> None:
+        """Save queue to file."""
+        try:
+            data = {name: task.to_dict() for name, task in self.tasks.items()}
+            self.queue_file.write_text(json.dumps(data, indent=2))
+            self.logger.info(f"Saved {len(self.tasks)} tasks to {self.queue_file}")
+        except Exception as e:
+            self.logger.error(f"Failed to save queue: {e}")
+
+    def get_task_status(self, task_name: str) -> Optional[TaskStatus]:
+        """Get current status of a task."""
+        task = self.tasks.get(task_name)
+        return task.status if task else None
+
+    def get_dependent_tasks(self, task_name: str) -> Set[str]:
+        """Get names of all tasks that depend on the given task."""
+        return {
+            name for name, task in self.tasks.items() if task_name in task.dependencies
+        }
+
+    def add_context_to_task(self, task_name: str, context_path: str) -> None:
+        """Add a context file path to a task."""
+        if task_name not in self.tasks:
+            self.logger.error(f"Task not found: {task_name}")
+            return
+
+        self.tasks[task_name].context_paths.add(context_path)
+        self.save_queue()
+
+    async def stop(self) -> None:
+        """Gracefully stop the queue processing.
+
+        Waits for current tasks to complete before stopping.
+        """
+        self.logger.info("Initiating graceful shutdown")
+        self.shutdown_event.set()
+        if self.current_tasks:
+            self.logger.info(f"Waiting for {len(self.current_tasks)} tasks to complete")
+            while self.current_tasks:
+                await asyncio.sleep(0.5)
+        self.logger.info("Shutdown complete")
+        task_templates.pyfãÛ¯®euÜO                UnusedImport        `typing.Any` imported but unused       Remove unused importN  Q         +  Q         from typing import Optional      N         UnusedImport!       `typing.Dict` imported but unused       Remove unused importH  L         +  Q         from typing import Optional      H  ý      """Template system for AI task generation.
+
+This module provides a collection of templates that guide AI models in performing
+various development tasks. Each template is designed to produce consistent,
+high-quality outputs while maintaining clarity and focus.
+"""
+
+from dataclasses import dataclass
+from typing import Optional, Dict, Any
+
+
+@dataclass
+class Template:
+    """A template for generating AI instructions.
+
+    Attributes:
+        name: Template identifier
+        description: What this template is used for
+        prompt: The template text with placeholders
+        examples: Optional example usage
+    """
+    name: str
+    description: str
+    prompt: str
+    examples: Optional[str] = None
+
+    def apply_template(self, **kwargs) -> str:
+        """Apply the template with provided parameters.
+        
+        Args:
+            **kwargs: Template parameters to insert
+            
+        Returns:
+            str: Formatted template text with parameters inserted
+            
+        Raises:
+            ValueError: If required parameters are missing
+        """
+        try:
+            return self.prompt.format(**kwargs)
+        except KeyError as e:
+            missing_key = str(e).strip("'")
+            raise ValueError(
+                f"Missing required template parameter: {missing_key}"
+            ) from e
+
+
+class TaskTemplates:
+    """Collection of task templates for different purposes."""
+
+    # Template for initial task description and analysis
+    DESCRIPTION = Template(
+        name="description",
+        description="Initial analysis and breakdown of a task",
+        prompt="""
+Analyze and describe how to implement the following task in a Python project:
+
+{task_description}
+
+Your analysis should include:
+
+1. Core Functionality:
+   - Main components needed
+   - Key features to implement
+   - Essential algorithms or data structures
+
+2. Implementation Strategy:
+   - Development sequence
+   - Component interactions
+   - Integration points
+   - Error handling approach
+
+3. Technical Considerations:
+   - Required dependencies
+   - Performance factors
+   - Security considerations
+   - Testing requirements
+
+4. Architecture & Design:
+   - Module organization
+   - Class/function structure
+   - Interface designs
+   - Data flow patterns
+
+Focus on creating a solution that is:
+- Maintainable and well-documented
+- Secure and robust
+- Efficient and scalable
+- Easy to test and extend
+
+Provide a clear, structured plan for implementing this task."""
+    )
+
+    # Template for code generation
+    CODE = Template(
+        name="code",
+        description="Generate implementation code",
+        prompt="""
+Write Python code to implement:
+
+{task_description}
+
+Requirements:
+1. Code Quality:
+   - Follow PEP 8 style guide
+   - Use clear, descriptive names
+   - Keep functions focused and modular
+   - Include comprehensive docstrings (PEP 257)
+
+2. Technical Requirements:
+   - Use type hints for clarity
+   - Implement proper error handling
+   - Add input validation
+   - Include logging where appropriate
+
+3. Design Patterns:
+   - Use appropriate design patterns
+   - Follow SOLID principles
+   - Keep code DRY
+   - Make interfaces clear
+
+4. Testing & Maintenance:
+   - Write testable code
+   - Consider edge cases
+   - Add helpful comments
+   - Make error messages clear
+
+The implementation should be production-ready and well-documented."""
+    )
+
+    # Template for test generation
+    TEST = Template(
+        name="test",
+        description="Generate test code",
+        prompt="""
+Create comprehensive tests for:
+
+{task_description}
+
+Test Suite Requirements:
+
+1. Unit Tests:
+   - Test each component in isolation
+   - Cover all public interfaces
+   - Include edge cases
+   - Test error conditions
+
+2. Integration Tests:
+   - Test component interactions
+   - Verify data flow
+   - Test system behaviors
+   - Check error propagation
+
+3. Test Organization:
+   - Use clear test names
+   - Group related tests
+   - Include setup/teardown
+   - Document test purposes
+
+4. Quality Checks:
+   - Ensure high coverage
+   - Test error handling
+   - Verify performance
+   - Validate outputs
+
+Use pytest fixtures and parameterization where appropriate."""
+    )
+
+    # Template for documentation
+    DOCUMENT = Template(
+        name="document",
+        description="Generate documentation",
+        prompt="""
+Create comprehensive documentation for:
+
+{task_description}
+
+Documentation Sections:
+
+1. Overview:
+   - Purpose and goals
+   - Key features
+   - Main components
+   - System architecture
+
+2. Technical Details:
+   - Implementation specifics
+   - API documentation
+   - Data structures
+   - Algorithms used
+
+3. Usage Guide:
+   - Installation steps
+   - Configuration options
+   - Common use cases
+   - Best practices
+
+4. Development Guide:
+   - Setup instructions
+   - Contributing guidelines
+   - Testing procedures
+   - Deployment process
+
+Follow Google-style Python docstring format."""
+    )
+
+    # Template for optimization tasks
+    OPTIMIZE = Template(
+        name="optimize",
+        description="Optimize existing code",
+        prompt="""
+Review and optimize this code:
+
+{task_description}
+
+Focus Areas:
+
+1. Performance:
+   - Algorithm efficiency
+   - Resource usage
+   - Memory management
+   - Processing speed
+
+2. Code Quality:
+   - Readability
+   - Maintainability
+   - Best practices
+   - Documentation
+
+3. Reliability:
+   - Error handling
+   - Edge cases
+   - Resource cleanup
+   - Thread safety
+
+4. Architecture:
+   - Code organization
+   - Design patterns
+   - Dependency management
+   - Interface design
+
+Provide clear explanations for optimization choices."""
+    )
+
+    # Template for review tasks
+    REVIEW = Template(
+        name="review",
+        description="Review and analyze code",
+        prompt="""
+Review this code and provide analysis:
+
+{task_description}
+
+Review Criteria:
+
+1. Code Quality:
+   - PEP 8 compliance
+   - Documentation quality
+   - Naming conventions
+   - Code organization
+
+2. Technical Analysis:
+   - Algorithm choices
+   - Performance implications
+   - Security considerations
+   - Resource management
+
+3. Architecture Review:
+   - Design patterns
+   - Component coupling
+   - Interface design
+   - Error handling
+
+4. Improvement Suggestions:
+   - Optimization opportunities
+   - Better approaches
+   - Missing features
+   - Security enhancements
+
+Provide specific, actionable feedback."""
+    )
+
+    @classmethod
+    def get_template(cls, template_type: str) -> Template:
+        """Get template by type.
+        
+        Args:
+            template_type: Type of template to retrieve
+            
+        Returns:
+            Template instance
+            
+        Raises:
+            ValueError: If template type not found
+        """
+        template = getattr(cls, template_type.upper(), None)
+        if not template:
+            raise ValueError(f"Unknown template type: {template_type}")
+        return template
+         __init__.pyäÈÎùÂ«¥¾vÙO                    # .ruff_cache/0.8.4/6317565134371285924
+
+
+"       /home/userland/projects/gptme_auto              run_queue.pyébáß0¾vÙO                    

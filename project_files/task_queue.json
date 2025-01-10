@@ -1,0 +1,75 @@
+{
+  "project_structure": {
+    "name": "task-processor",
+    "description": "A task processing system",
+    "template_type": "default",
+    "priority": "high",
+    "status": "active",
+    "context_paths": [
+      "/src",
+      "/tests"
+    ],
+    "dependencies": [
+      "pytest",
+      "asyncio"
+    ],
+    "created_at": "2025-01-10T12:00:00",
+    "completed_at": null,
+    "outputs": [
+      "output.log"
+    ],
+    "metadata": {
+      "author": "AI Assistant"
+    },
+    "src": [
+      "__init__.py",
+      "task_processor.py",
+      "rate_limiter.py",
+      "template_manager.py"
+    ],
+    "tests": [
+      "__init__.py",
+      "test_task_processor.py",
+      "test_rate_limiter.py",
+      "test_template_manager.py"
+    ],
+    "config": [
+      "task_queue.json",
+      "pyproject.toml"
+    ]
+  },
+  "templates": {
+    "email": "Subject: {subject}\nTo: {recipient}\nBody: {body}",
+    "sms": "To: {phone}\nMessage: {message}",
+    "notification": "{title}: {message}"
+  },
+  "validators": {
+    "email": {
+      "required_fields": [
+        "subject",
+        "recipient",
+        "body"
+      ],
+      "max_length": 1000
+    },
+    "sms": {
+      "required_fields": [
+        "phone",
+        "message"
+      ],
+      "max_length": 160
+    },
+    "notification": {
+      "required_fields": [
+        "title",
+        "message"
+      ],
+      "max_length": 100
+    }
+  },
+  "rate_limits": {
+    "email": 100,
+    "sms": 50,
+    "notification": 200
+  }
+}
