@@ -1,34 +1,184 @@
 [tool.poetry]
-name = "gptme-auto"  # Projektets namn
-version = "0.1.0"  # Version av ditt projekt
-description = "A project that automates GPT-based tasks"
-authors = ["Your Name <you@example.com>"]
-license = "MIT"  # Du kan ändra detta beroende på vilken licens du använder
+name = "gptme-auto"
+version = "0.2.0"
+description = "AI-assisted development automation system"
+authors = ["Your Name <your.email@example.com>"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/yourusername/gptme-auto"
+repository = "https://github.com/yourusername/gptme-auto"
+documentation = "https://gptme-auto.readthedocs.io"
+keywords = ["ai", "automation", "development", "cli"]
 
-# Specifierar att projektet finns i katalogen "src"
 packages = [
     { include = "src" }
 ]
 
+include = [
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md",
+    "templates/*",
+]
+
 [tool.poetry.dependencies]
-# Lägg till eventuella beroenden här
-python = "^3.12"  # Ange Python-versionen som ditt projekt kräver
-
-# Exempel på beroenden:
-pick = "^1.1.0"  # För att hantera val i terminalen, som i ditt fall
-requests = "^2.26.0"  # Om du använder requests för API-anrop eller webbsökningar
-# Lägg till fler beroenden här vid behov
-loguru = "^0.7.3"
+python = "^3.10"
+click = "^8.1.7"
+loguru = "^0.7.2"
+pyyaml = "^6.0.1"
+toml = "^0.10.2"
+rich = "^13.7.0"
+typer = "^0.9.0"
+pydantic = "^2.5.3"
+requests = "^2.31.0"
+python-dotenv = "^1.0.0"
+aiohttp = "^3.9.1"
+asyncio = "^3.4.3"
+typing-extensions = "^4.9.0"
+pathspec = "^0.12.1"
 click-completion = "^0.5.2"
-click = "^8.1.8"
 
-[tool.poetry.dev-dependencies]
-# Lägg till utvecklingsberoenden här, som tester eller byggverktyg
-pytest = "^7.1.2"  # Om du använder pytest för tester
-black = "^21.12b0"  # Om du använder Black för kodformattering
-flake8 = "^4.0.1"  # Om du använder Flake8 för statisk kodanalys
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+pytest-cov = "^4.1.0"
+pytest-asyncio = "^0.23.2"
+pytest-sugar = "^0.9.7"
+pytest-clarity = "^1.0.1"
+pytest-github-actions-annotate-failures = "^0.2.0"
+pytest-timeout = "^2.2.0"
+pytest-reportlog = "^0.3.0"
+pytest-metadata = "^3.0.0"
+ruff = "^0.1.14"
+coverage = "^7.4.0"
+pytest-mock = "^3.12.0"
+responses = "^0.24.1"
+types-toml = "^0.10.8.7"
+types-pyyaml = "^6.0.12.12"
+
+[tool.poetry.group.docs.dependencies]
+sphinx = "^7.2.6"
+sphinx-rtd-theme = "^2.0.0"
+sphinx-click = "^5.1.0"
+sphinx-autodoc-typehints = "^1.25.2"
+mkdocs = "^1.5.3"
+mkdocs-material = "^9.5.3"
+
+[tool.poetry.plugins."poetry.application.plugin"]
+poetry-plugin-export = "poetry_plugin_export.plugins:ExportPlugin"
+poetry-plugin-up = "poetry.plugins.up:UpPlugin"
+poetry-plugin-dotenv = "poetry_plugin_dotenv.plugin:DotenvPlugin"
 
 [build-system]
-# Dessa inställningar behövs för att bygga och installera paketet korrekt
-requires = ["poetry-core>=1.0.0"]
+requires = ["poetry-core>=1.9.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+gptme = "src.improved_cli:cli"
+
+[tool.ruff]
+# Samma regler som Ruff använder som standard + några extra
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "YTT", # flake8-2020
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "DTZ", # flake8-datetimez
+    "ISC", # flake8-implicit-str-concat
+    "PIE", # flake8-pie
+    "T20", # flake8-print
+    "PT",  # flake8-pytest-style
+    "RET", # flake8-return
+    "SIM", # flake8-simplify
+    "ARG", # flake8-unused-arguments
+    "ERA", # eradicate
+    "PGH", # pygrep-hooks
+    "PLC", # pylint
+    "PLE", # pylint
+    "PLR", # pylint
+    "PLW", # pylint
+    "TRY", # tryceratops
+]
+
+# Ignorera vissa regler
+ignore = [
+    "E501",      # line too long - hanteras av formatter
+    "TRY003",    # Undvik för många try-except
+    "PLR0913",   # För många argument till funktion
+]
+
+# Linjens maxlängd
+line-length = 88
+
+# Målad Python-version
+target-version = "py310"
+
+[tool.ruff.isort]
+known-first-party = ["src"]
+combine-as-imports = true
+
+[tool.ruff.flake8-quotes]
+docstring-quotes = "double"
+inline-quotes = "single"
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = """
+    -ra
+    -q
+    --cov=src
+    --cov-report=term-missing
+    --cov-report=xml:coverage.xml
+    --timeout=300
+    --reportlog=pytest-log.jsonl
+    --metadata-report=pytest-metadata.json
+    --no-header
+    --tb=short
+    --show-capture=no
+    --disable-warnings
+    """
+testpaths = ["tests"]
+asyncio_mode = "auto"
+timeout = 300
+markers = [
+    "slow: marks tests as slow",
+    "integration: marks tests as integration tests",
+    "api: marks tests that use external APIs",
+]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(filename)s:%(lineno)s)"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+
+[tool.coverage.report]
+precision = 2
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "pass",
+    "\\.\\.\\.",
+]
+skip_empty = true
+
+[tool.coverage.json]
+output = "coverage.json"
+pretty_print = true
+
+[tool.coverage.xml]
+output = "coverage.xml"

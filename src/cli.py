@@ -1,509 +1,548 @@
-import click
-import json
-from pathlib import Path
-from loguru import logger
-import toml
-import os
+"""Improved CLI implementation with additional features."""
+
 import sys
-from typing import Optional, List, Dict, Any
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, List, Dict, Any, Tuple
+from functools import wraps
+import click
+from loguru import logger
+from collections import Counter
 
-try:
-    import click_completion
+from .schemas import TaskStatus, validate_task_name, validate_task_definition
+from .config_manager import Config, ConfigError
+from .task_generator import (
+    generate_task_sequence,
+    load_task_definitions,
+    generate_task_tree,
+    export_tasks
+)
 
-    click_completion.init()
-except ImportError:
-    click_completion = None
-    print("click-completion är inte installerat. Automatisk komplettering kommer inte att fungera.")
+# Color schemes for different statuses
+STATUS_COLORS = {
+    TaskStatus.PENDING.value: "yellow",
+    TaskStatus.IN_PROGRESS.value: "blue",
+    TaskStatus.COMPLETED.value: "green",
+    TaskStatus.FAILED.value: "red"
+}
 
-# Konstanten för filnamn
-TASK_QUEUE_FILE = "task_queue.json"
-GPTME_TOML_FILE = "gptme.toml"
-GPTME_CLI_LOG_FILE = "gptme_cli.log"
-GPTME_HISTORY_FILE = ".gptme_history"
+def setup_logging(verbose: bool, debug: bool) -> None:
+    """Configure logging based on verbosity level."""
+    log_config = {
+        'rotation': '500 MB',
+        'format': '{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}',
+        'enqueue': True
+    }
+    
+    if debug:
+        log_config['level'] = 'DEBUG'
+    elif verbose:
+        log_config['level'] = 'INFO'
+    else:
+        log_config['level'] = 'WARNING'
+        
+    logger.configure(**log_config)
 
-# Konfigurera loguru med grundläggande inställningar
-logger.add(GPTME_CLI_LOG_FILE, rotation="500 MB", level="INFO")
+class CLIError(Exception):
+    """Base exception for CLI errors."""
+    pass
 
-def load_tasks() -> Dict[str, Dict[str, Any]]:
-    """Ladda uppgifter från task_queue.json.
+def handle_cli_error(func):
+    """Decorator for handling CLI errors gracefully."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except CLIError as e:
+            click.echo(click.style(f"Error: {str(e)}", fg="red"), err=True)
+            sys.exit(1)
+        except Exception as e:
+            logger.exception("Unexpected error")
+            click.echo(
+                click.style(f"Unexpected error: {str(e)}", fg="red"),
+                err=True
+            )
+            sys.exit(1)
+    return wrapper
 
-    Returns:
-        En dictionary där nycklarna är uppgiftsnamn och värdena är uppgiftsdata.
-        Returnerar en tom dictionary om filen inte hittas eller är ogiltig JSON.
-    """
-    try:
-        with open(TASK_QUEUE_FILE, "r") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        logger.warning(f"Filen '{TASK_QUEUE_FILE}' hittades inte. Skapar en ny.")
-        return {}
-    except json.JSONDecodeError as e:
-        logger.error(f"Fel vid avkodning av JSON i '{TASK_QUEUE_FILE}': {e}")
-        return {}
-
-def save_tasks(tasks: Dict[str, Dict[str, Any]]) -> None:
-    """Spara uppgifter till task_queue.json.
-
-    Args:
-        tasks: En dictionary där nycklarna är uppgiftsnamn och värdena är uppgiftsdata.
-    """
-    try:
-        with open(TASK_QUEUE_FILE, "w") as f:
-            json.dump(tasks, indent=2)
-        logger.info(f"Uppgifter sparade till '{TASK_QUEUE_FILE}'")
-    except IOError as e:
-        logger.error(f"Fel vid skrivning till '{TASK_QUEUE_FILE}': {e}")
-        click.echo(
-            click.style(f"Fel: Kunde inte spara uppgifter till '{TASK_QUEUE_FILE}'.", fg="red")
-        )
-
-def load_config() -> Dict[str, Dict[str, Any]]:
-    """Ladda konfiguration från gptme.toml.
-
-    Returns:
-        En dictionary som representerar konfigurationen från gptme.toml.
-        Returnerar en tom dictionary om filen inte hittas eller är ogiltig TOML.
-    """
-    try:
-        return toml.load(GPTME_TOML_FILE)
-    except FileNotFoundError:
-        logger.error(f"Konfigurationsfilen '{GPTME_TOML_FILE}' hittades inte.")
-        return {}
-    except toml.TomlDecodeError as e:
-        logger.error(f"Fel vid avkodning av TOML i '{GPTME_TOML_FILE}': {e}")
-        return {}
-
-def append_to_history(command: str) -> None:
-    """Lägg till ett kommando i historikfilen.
-
-    Args:
-        command: Kommandot som ska läggas till i historiken.
-    """
-    try:
-        with open(GPTME_HISTORY_FILE, "a") as f:
-            f.write(command + "\n")
-    except IOError as e:
-        logger.error(f"Fel vid skrivning till historikfilen '{GPTME_HISTORY_FILE}': {e}")
-
-def load_history() -> List[str]:
-    """Ladda kommandohistoriken från filen.
-
-    Returns:
-        En lista med tidigare körda kommandon.
-        Returnerar en tom lista om historikfilen inte hittas.
-    """
-    try:
-        with open(GPTME_HISTORY_FILE, "r") as f:
-            return [line.strip() for line in f.readlines()]
-    except FileNotFoundError:
-        return []
-
-# Skapa en Click-grupp för huvudkommandot
+# Create Click command group
 @click.group(context_settings=dict(help_option_names=["-h", "--help"]))
 @click.version_option()
 @click.option(
-    "--verbose", "-v", is_flag=True, default=False, help="Visa mer detaljerad information."
+    "--verbose", "-v",
+    is_flag=True,
+    default=False,
+    help="Show more detailed information."
 )
 @click.option(
-    "--debug", is_flag=True, default=False, help="Visa debug-information för felsökning."
+    "--debug",
+    is_flag=True,
+    default=False,
+    help="Show debug information."
 )
 @click.pass_context
 def cli(ctx: click.Context, verbose: bool, debug: bool):
-    """Hantera AI-assisterade utvecklingsuppgifter.
-
-    Använd detta CLI-verktyg för att hantera uppgifter för ditt gptme-system.
-    Du kan lägga till, lista, visa status, starta om och ta bort uppgifter.
-    Använd '--help' för att se tillgängliga kommandon och deras optioner.
-    """
+    """Manage AI-assisted development tasks."""
     ctx.ensure_object(dict)
     ctx.obj["VERBOSE"] = verbose
     ctx.obj["DEBUG"] = debug
+    setup_logging(verbose, debug)
+    
+    # Initialize configuration
+    try:
+        config_file = Path("gptme.toml")
+        ctx.obj["config"] = Config(config_file)
+    except ConfigError as e:
+        raise CLIError(f"Configuration error: {e}")
 
-    if debug:
-        logger.remove()
-        logger.add(GPTME_CLI_LOG_FILE, rotation="500 MB", level="DEBUG")
-        logger.add("stderr", level="DEBUG")
-        logger.debug("Debug-läge aktiverat.")
-    elif verbose:
-        logger.remove()
-        logger.add(GPTME_CLI_LOG_FILE, rotation="500 MB", level="INFO")
-        logger.add("stderr", level="INFO")
-        logger.info("Verbose-läge aktiverat.")
-
-# Lägg till kommandot 'add'
-@cli.command()
-@click.argument("descriptions", nargs="+")
-@click.pass_context
-def add(ctx: click.Context, descriptions: List[str]):
-    """Lägg till en eller flera nya uppgifter.
-
-    Argument:
-        descriptions: En lista med beskrivningar för de nya uppgifterna.
-
-    Exempel:
-        gptme add "Skriv enhetstester för modul X" "Dokumentera API-slutpunkt Y"
-    """
-    tasks = load_tasks()
-    for description in descriptions:
-        task_name = f"task_{len(tasks) + 1}"
-        task_data = {
-            "name": task_name,
-            "description": description,
-            "template_type": "description",
-            "priority": 10,
-            "status": "pending",
-            "context_paths": [],
-            "dependencies": [],
-            "created_at": "nu",  # Bör ersättas med en faktisk tidsstämpel
-            "completed_at": None,
-            "outputs": [],
-            "metadata": {},
-        }
-        tasks[task_name] = task_data
-        logger.info(f"Lade till uppgift '{task_name}' med beskrivningen: {description}")
-        if ctx.obj["VERBOSE"]:
-            click.echo(click.style(f"Lade till uppgift '{task_name}'.", fg="green"))
-    save_tasks(tasks)
-    click.echo(click.style("Uppgifter tillagda!", fg="green", bold=True))
-
-# Lägg till kommandot 'list'
-@cli.command()
-@click.option("--pending", is_flag=True, help="Visa endast väntande uppgifter.")
-@click.option("--in-progress", is_flag=True, help="Visa endast uppgifter som bearbetas.")
-@click.option("--completed", is_flag=True, help="Visa endast slutförda uppgifter.")
-@click.option("--failed", is_flag=True, help="Visa endast misslyckade uppgifter.")
-@click.option(
-    "--no-trunc", is_flag=True, help="Visa fullständig beskrivning, trunkera inte."
-)
-def list(pending: bool, in_progress: bool, completed: bool, failed: bool, no_trunc: bool):
-    """Lista uppgifter med möjlighet att filtrera efter status.
-
-    Använd flaggor för att filtrera uppgifter baserat på deras status.
-    Om inga flaggor anges visas alla uppgifter.
-    """
-    tasks = load_tasks()
-    filtered_tasks = {}
-    if pending:
-        filtered_tasks.update(
-            {k: v for k, v in tasks.items() if v["status"] == "pending"}
-        )
-    if in_progress:
-        filtered_tasks.update(
-            {k: v for k, v in tasks.items() if v["status"] == "in_progress"}
-        )
-    if completed:
-        filtered_tasks.update(
-            {k: v for k, v in tasks.items() if v["status"] == "completed"}
-        )
-    if failed:
-        filtered_tasks.update(
-            {k: v for k, v in tasks.items() if v["status"] == "failed"}
-        )
-
-    if not pending and not in_progress and not completed and not failed:
-        filtered_tasks = tasks
-
-    if filtered_tasks:
-        click.echo(click.style("Uppgifter:", bold=True))
-        for name, task in filtered_tasks.items():
-            description = task["description"]
-            if not no_trunc and len(description) > 60:
-                description = f"{description[:57]}..."
-            status_color = {
-                "pending": "yellow",
-                "in_progress": "blue",
-                "completed": "green",
-                "failed": "red",
-            }.get(task["status"], "white")
-            click.echo(
-                f"- {click.style(name, bold=True)}: {description} "
-                f"({click.style('Status', bold=True)}: {click.style(task['status'], fg=status_color)})"
-            )
-    else:
-        click.echo(click.style("Inga uppgifter hittades med de kriterierna.", fg="yellow"))
-
-# Lägg till kommandot 'status'
-@cli.command()
-@click.argument("task_name")
-def status(task_name: str):
-    """Visa detaljerad status för en specifik uppgift.
-
-    Argument:
-        task_name: Namnet på uppgiften vars status ska visas.
-    """
-    tasks = load_tasks()
-    task = tasks.get(task_name)
-    if task:
-        click.echo(click.style(f"Status för uppgift '{task_name}':", bold=True))
-        for key, value in task.items():
-            click.echo(f"  {click.style(key + ':', bold=True)} {value}")
-    else:
-        click.echo(click.style(f"Fel: Uppgift '{task_name}' hittades inte.", fg="red"))
-
-# Lägg till kommandot 'start'
-@cli.command()
-@click.argument("task_name")
-def start(task_name: str):
-    """Tvinga igång bearbetningen av en specifik uppgift.
-
-    Används för att manuellt sätta statusen till 'pending' om en uppgift har fastnat.
-
-    Argument:
-        task_name: Namnet på uppgiften som ska startas om.
-    """
-    tasks = load_tasks()
-    if task_name in tasks:
-        if tasks[task_name]["status"] != "pending":
-            logger.info(f"Ändrar status för uppgift '{task_name}' till 'pending'.")
-            tasks[task_name]["status"] = "pending"
-            save_tasks(tasks)
-            click.echo(
-                click.style(f"Uppgift '{task_name}' har satts till väntande.", fg="yellow")
-            )
-        else:
-            click.echo(
-                click.style(f"Uppgift '{task_name}' är redan i vänteläge.", fg="blue")
-            )
-    else:
-        click.echo(click.style(f"Fel: Uppgift '{task_name}' hittades inte.", fg="red"))
-
-# Lägg till kommandot 'remove'
-@cli.command()
-@click.argument("task_name")
-def remove(task_name: str):
-    """Ta bort en specifik uppgift.
-
-    Varning: Denna åtgärd kan inte ångras.
-
-    Argument:
-        task_name: Namnet på uppgiften som ska tas bort.
-    """
-    tasks = load_tasks()
-    if task_name in tasks:
-        if click.confirm(
-            click.style(f"Är du säker på att du vill ta bort uppgift '{task_name}'?", fg="yellow")
-        ):
-            del tasks[task_name]
-            save_tasks(tasks)
-            click.echo(
-                click.style(f"Uppgift '{task_name}' har tagits bort.", fg="green")
-            )
-            logger.info(f"Uppgift '{task_name}' borttagen.")
-    else:
-        click.echo(click.style(f"Fel: Uppgift '{task_name}' hittades inte.", fg="red"))
-
-# Skapa en Click-grupp för konfigurationshantering
+# Task management commands
 @cli.group()
-def config():
-    """Hantera gptme-konfigurationen."""
+def task():
+    """Task management commands."""
     pass
 
-# Lägg till subkommandot 'get' under 'config'
-@config.command("get")
-@click.argument("setting", required=False)
-def config_get(setting: Optional[str]):
-    """Visa gptme-konfigurationen.
+@task.command("add")
+@click.argument("description")
+@click.option("--priority", "-p", type=int, default=100)
+@click.option("--tag", "-t", multiple=True, help="Add tags to task")
+@click.option("--depends", "-d", multiple=True, help="Add task dependencies")
+@click.pass_context
+@handle_cli_error
+def task_add(
+    ctx: click.Context,
+    description: str,
+    priority: int,
+    tag: Tuple[str, ...],
+    depends: Tuple[str, ...]
+):
+    """Add a new task."""
+    task_data = {
+        "name": f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        "description": description,
+        "priority": priority,
+        "status": TaskStatus.PENDING.value,
+        "tags": list(tag),
+        "dependencies": list(depends),
+        "created_at": datetime.now().isoformat(),
+        "completed_at": None,
+        "outputs": [],
+        "metadata": {}
+    }
+    
+    if not validate_task_definition(task_data):
+        raise CLIError("Invalid task definition")
+        
+    tasks = load_tasks()
+    tasks[task_data["name"]] = task_data
+    save_tasks(tasks)
+    
+    click.echo(
+        click.style(f"Added task: {task_data['name']}", fg="green")
+    )
 
-    Visar alla inställningar eller en specifik inställning om den anges.
+@task.command("list")
+@click.option("--status", "-s", multiple=True, help="Filter by status")
+@click.option("--tag", "-t", multiple=True, help="Filter by tag")
+@click.option("--no-trunc", is_flag=True, help="Show full descriptions")
+@handle_cli_error
+def task_list(status: Tuple[str, ...], tag: Tuple[str, ...], no_trunc: bool):
+    """List tasks with optional filtering."""
+    tasks = load_tasks()
+    
+    # Apply filters
+    if status:
+        tasks = {
+            name: task for name, task in tasks.items()
+            if task["status"] in status
+        }
+    
+    if tag:
+        tasks = {
+            name: task for name, task in tasks.items()
+            if any(t in task.get("tags", []) for t in tag)
+        }
+    
+    if not tasks:
+        click.echo("No tasks found matching criteria")
+        return
+    
+    # Sort by priority
+    sorted_tasks = sorted(
+        tasks.items(),
+        key=lambda x: (x[1]["priority"], x[0])
+    )
+    
+    for name, task in sorted_tasks:
+        status_color = STATUS_COLORS.get(task["status"], "white")
+        description = task["description"]
+        if not no_trunc and len(description) > 60:
+            description = description[:57] + "..."
+            
+        tags = f" [{', '.join(task['tags'])}]" if task['tags'] else ""
+        
+        click.echo(
+            f"{name} "
+            f"({click.style(task['status'], fg=status_color)}) "
+            f"[P{task['priority']}]{tags}: {description}"
+        )
 
-    Argument:
-        setting: Den specifika inställningen att visa (t.ex. 'gptme.default_model').
-                 Använd punktnotation för att navigera i sektioner.
-    """
-    cfg = load_config()
-    if setting:
-        try:
-            value = cfg
-            for key in setting.split("."):
-                value = value[key]
-            click.echo(f"{click.style(setting + ':', bold=True)} {value}")
-        except KeyError:
-            click.echo(
-                click.style(
-                    f"Fel: Inställningen '{setting}' hittades inte i konfigurationen.", fg="red"
-                )
-            )
-    else:
-        click.echo(click.style("Aktuell konfiguration:", bold=True))
-        for section, settings in cfg.items():
-            click.echo(f"\n[{click.style(section, bold=True)}")
-            for key, value in settings.items():
-                click.echo(f"{key} = {value}")
+@task.command("show")
+@click.argument("task_name")
+@handle_cli_error
+def task_show(task_name: str):
+    """Show detailed information about a task."""
+    tasks = load_tasks()
+    if task_name not in tasks:
+        raise CLIError(f"Task not found: {task_name}")
+        
+    task = tasks[task_name]
+    status_color = STATUS_COLORS.get(task["status"], "white")
+    
+    click.echo(click.style(f"\nTask: {task_name}", bold=True))
+    click.echo("-" * 40)
+    click.echo(f"Status: {click.style(task['status'], fg=status_color)}")
+    click.echo(f"Priority: {task['priority']}")
+    click.echo(f"Created: {task['created_at']}")
+    if task["completed_at"]:
+        click.echo(f"Completed: {task['completed_at']}")
+    if task["tags"]:
+        click.echo(f"Tags: {', '.join(task['tags'])}")
+    if task["dependencies"]:
+        click.echo(f"Dependencies: {', '.join(task['dependencies'])}")
+    click.echo("\nDescription:")
+    click.echo(task["description"])
+    if task["outputs"]:
+        click.echo("\nOutputs:")
+        for output in task["outputs"]:
+            click.echo(f"- {output}")
 
-# Lägg till subkommandot 'set' under 'config'
-@config.command("set")
-@click.argument("setting")
-@click.argument("value")
-def config_set(setting: str, value: str):
-    """Ändra en specifik gptme-konfigurationsinställning.
-
-    Argument:
-        setting: Inställningen att ändra (t.ex. 'gptme.default_model').
-        value: Det nya värdet för inställningen.
-    """
-    cfg = load_config()
-    try:
-        section_keys = setting.split(".")
-        if len(section_keys) < 2:
-            click.echo(
-                click.style(
-                    "Fel: Ogiltig inställning. Använd formatet 'sektion.inställning'.", fg="red"
-                )
-            )
-            return
-
-        section = cfg.setdefault(section_keys[0], {})
-        setting_key = section_keys[1]
-        section[setting_key] = value
-        with open(GPTME_TOML_FILE, "w") as f:
-            toml.dump(cfg, f)
+@@task.command("update")
+@click.argument("task_name")
+@click.option("--status", "-s", help="Update task status")
+@click.option("--priority", "-p", type=int, help="Update task priority")
+@click.option("--description", "-d", help="Update task description")
+@click.option("--add-tag", "-t", multiple=True, help="Add tags")
+@click.option("--remove-tag", "-r", multiple=True, help="Remove tags")
+@click.option("--add-dep", "-a", multiple=True, help="Add dependencies")
+@click.option("--remove-dep", "-x", multiple=True, help="Remove dependencies")
+@handle_cli_error
+def task_update(
+    task_name: str,
+    status: Optional[str],
+    priority: Optional[int],
+    description: Optional[str],
+    add_tag: Tuple[str, ...],
+    remove_tag: Tuple[str, ...],
+    add_dep: Tuple[str, ...],
+    remove_dep: Tuple[str, ...]
+):
+    """Update task properties."""
+    tasks = load_tasks()
+    if task_name not in tasks:
+        raise CLIError(f"Task not found: {task_name}")
+        
+    task = tasks[task_name]
+    changes = []
+    
+    if status:
+        if status not in TaskStatus.__members__.values():
+            raise CLIError(f"Invalid status: {status}")
+        task["status"] = status
+        if status == TaskStatus.COMPLETED.value:
+            task["completed_at"] = datetime.now().isoformat()
+        changes.append("status")
+        
+    if priority is not None:
+        task["priority"] = priority
+        changes.append("priority")
+        
+    if description:
+        task["description"] = description
+        changes.append("description")
+        
+    if add_tag:
+        task.setdefault("tags", []).extend(add_tag)
+        task["tags"] = list(set(task["tags"]))  # Remove duplicates
+        changes.append("tags")
+        
+    if remove_tag:
+        task["tags"] = [t for t in task.get("tags", []) if t not in remove_tag]
+        changes.append("tags")
+        
+    if add_dep:
+        task.setdefault("dependencies", []).extend(add_dep)
+        task["dependencies"] = list(set(task["dependencies"]))
+        changes.append("dependencies")
+        
+    if remove_dep:
+        task["dependencies"] = [
+            d for d in task.get("dependencies", [])
+            if d not in remove_dep
+        ]
+        changes.append("dependencies")
+    
+    if changes:
+        save_tasks(tasks)
         click.echo(
             click.style(
-                f"Inställningen '{setting}' har ändrats till '{value}'.", fg="green"
+                f"Updated task {task_name}: {', '.join(changes)}",
+                fg="green"
             )
         )
-        logger.info(f"Konfigurationsinställning '{setting}' ändrad till '{value}'.")
-    except (IOError, TypeError) as e:
-        logger.error(f"Fel vid ändring av konfigurationen: {e}")
-        click.echo(click.style(f"Fel: Kunde inte ändra inställningen: {e}", fg="red"))
+    else:
+        click.echo("No changes specified")
 
-# Lägg till kommandot 'gptme_script'
-@cli.command()
-@click.pass_context
-def gptme_script(ctx: click.Context):
-    """Kör en serie gptme-kommandon från inklistrad text.
+@task.command("deps")
+@click.argument("task_name", required=False)
+@handle_cli_error
+def task_deps(task_name: Optional[str] = None):
+    """Show task dependencies as a tree."""
+    tasks = load_tasks()
+    
+    def print_tree(task: str, level: int = 0, seen: Optional[set] = None) -> None:
+        if seen is None:
+            seen = set()
+            
+        if task not in tasks:
+            click.echo("  " * level + f"? {task} (not found)")
+            return
+            
+        if task in seen:
+            click.echo("  " * level + f"↻ {task} (circular dependency)")
+            return
+            
+        seen.add(task)
+        status_color = STATUS_COLORS.get(tasks[task]["status"], "white")
+        prefix = "  " * level + ("└─ " if level > 0 else "")
+        
+        click.echo(
+            f"{prefix}{click.style(task, bold=True)} "
+            f"({click.style(tasks[task]['status'], fg=status_color)})"
+        )
+        
+        for dep in sorted(tasks[task].get("dependencies", [])):
+            print_tree(dep, level + 1, seen.copy())
+    
+    if task_name:
+        if task_name not in tasks:
+            raise CLIError(f"Task not found: {task_name}")
+        print_tree(task_name)
+    else:
+        # Find root tasks (those that are not dependencies of any other task)
+        roots = {
+            name for name in tasks
+            if not any(
+                name in t.get("dependencies", [])
+                for t in tasks.values()
+            )
+        }
+        
+        for root in sorted(roots):
+            print_tree(root)
 
-    Klistra in en eller flera gptme-kommandon, en per rad.
-    Avsluta inmatningen med en tom rad.
-    """
+@task.command("tags")
+@click.argument("tag_name", required=False)
+@handle_cli_error
+def task_tags(tag_name: Optional[str] = None):
+    """List tasks by tag."""
+    tasks = load_tasks()
+    
+    # Collect all tags if no specific tag requested
+    if not tag_name:
+        all_tags = set()
+        for task in tasks.values():
+            all_tags.update(task.get("tags", []))
+            
+        if not all_tags:
+            click.echo("No tags found")
+            return
+            
+        click.echo(click.style("Available tags:", bold=True))
+        for tag in sorted(all_tags):
+            count = sum(1 for t in tasks.values() if tag in t.get("tags", []))
+            click.echo(f"{tag} ({count} tasks)")
+        return
+    
+    # Show tasks for specific tag
+    matching_tasks = {
+        name: task for name, task in tasks.items()
+        if tag_name in task.get("tags", [])
+    }
+    
+    if not matching_tasks:
+        click.echo(f"No tasks found with tag: {tag_name}")
+        return
+        
+    click.echo(click.style(f"\nTasks tagged with '{tag_name}':", bold=True))
+    for name, task in sorted(matching_tasks.items()):
+        status_color = STATUS_COLORS.get(task["status"], "white")
+        click.echo(
+            f"{name} "
+            f"({click.style(task['status'], fg=status_color)}): "
+            f"{task['description']}"
+        )
+
+@task.command("stats")
+@handle_cli_error
+def task_stats():
+    """Show task statistics."""
+    tasks = load_tasks()
+    if not tasks:
+        click.echo("No tasks found")
+        return
+    
+    # Status counts
+    status_counts = Counter(task["status"] for task in tasks.values())
+    
+    # Priority stats
+    priorities = [task["priority"] for task in tasks.values()]
+    avg_priority = sum(priorities) / len(priorities)
+    
+    # Time stats
+    completed_tasks = [
+        task for task in tasks.values()
+        if task["status"] == TaskStatus.COMPLETED.value
+        and task.get("completed_at")
+        and task.get("created_at")
+    ]
+    
+    if completed_tasks:
+        durations = [
+            (
+                datetime.fromisoformat(task["completed_at"]) -
+                datetime.fromisoformat(task["created_at"])
+            ).total_seconds() / 3600  # Convert to hours
+            for task in completed_tasks
+        ]
+        avg_duration = sum(durations) / len(durations)
+    else:
+        avg_duration = 0
+    
+    # Tag stats
+    all_tags = set()
+    tag_counts = Counter()
+    for task in tasks.values():
+        tags = task.get("tags", [])
+        all_tags.update(tags)
+        tag_counts.update(tags)
+    
+    click.echo(click.style("\nTask Statistics", bold=True))
+    click.echo("─" * 40)
+    
+    click.echo("\nStatus Distribution:")
+    for status in TaskStatus:
+        count = status_counts.get(status.value, 0)
+        color = STATUS_COLORS.get(status.value, "white")
+        click.echo(
+            f"{click.style(status.value, fg=color)}: "
+            f"{count} tasks ({count/len(tasks)*100:.1f}%)"
+        )
+    
+    click.echo(f"\nPriority Average: {avg_priority:.1f}")
+    
+    if completed_tasks:
+        click.echo(
+            f"\nAverage Completion Time: {avg_duration:.1f} hours "
+            f"({len(completed_tasks)} tasks)"
+        )
+    
+    if all_tags:
+        click.echo("\nTop Tags:")
+        for tag, count in tag_counts.most_common(5):
+            click.echo(f"{tag}: {count} tasks")
+
+@task.command("export")
+@click.argument(
+    "format_type",
+    type=click.Choice(["json", "yaml"]),
+    default="yaml"
+)
+@click.argument("output_file")
+@handle_cli_error
+def task_export(format_type: str, output_file: str):
+    """Export tasks to file."""
+    tasks = load_tasks()
+    if not tasks:
+        raise CLIError("No tasks to export")
+        
+    output_path = Path(output_file)
+    export_tasks(
+        [task for task in tasks.values()],
+        output_path,
+        format_type
+    )
+    
     click.echo(
         click.style(
-            "Klistra in gptme-kommandon här, en per rad. Avsluta med en tom rad:",
-            fg="yellow",
+            f"Exported {len(tasks)} tasks to {output_file}",
+            fg="green"
         )
     )
-    commands: List[str] = []
-    while True:
-        line = input("> ")
-        if not line.strip():
-            break
-        commands.append(line)
 
-    if not commands:
-        click.echo(click.style("Inga kommandon att köra.", fg="blue"))
-        return
-
-    click.echo(click.style("\nFöljande kommandon kommer att köras:", bold=True))
-    for cmd in commands:
-        click.echo(f"- {cmd}")
-
-    if not click.confirm(click.style("Vill du fortsätta och köra dessa kommandon?", fg="yellow")):
-        click.echo(click.style("Exekvering avbruten.", fg="blue"))
-        return
-
-    click.echo(click.style("\nExekverar kommandon:", bold=True))
-    for cmd_str in commands:
-        try:
-            runner = cli.make_context("gptme", args=cmd_str.split())
-            with runner:
-                cli.invoke(runner)
-            append_to_history(cmd_str)  # Lägg till i historiken efter lyckad körning
-        except click.NoSuchOption as e:
-            click.echo(click.style(f"Fel: Ogiltig flagga i '{cmd_str}': {e}", fg="red"))
-        except click.NoSuchCommand as e:
-            click.echo(click.style(f"Fel: Okänt kommando: {e}", fg="red"))
-        except SystemExit:
-            pass
-        except Exception as e:
-            logger.error(f"Fel vid körning av kommando '{cmd_str}': {e}")
-            click.echo(click.style(f"Fel vid körning av '{cmd_str}': {e}", fg="red"))
-
-# Implementera automatisk komplettering
-@cli.command()
+@task.command("import")
+@click.argument("input_file")
 @click.option(
-    "--append/--overwrite",
+    "--merge/--overwrite",
     default=True,
-    help="Lägg till kompletteringskoden eller skriv över den befintliga.",
+    help="Merge with existing tasks or overwrite"
 )
-@click.argument(
-    "shell",
-    type=click_completion.DocumentedChoice(click_completion.shells),
-    required=False,
-)
-def autocomplete(append: bool, shell: Optional[str]):
-    """Installera automatisk komplettering för din shell.
-
-    Genererar och installerar skript för automatisk komplettering av gptme-kommandon.
-    Stöder bash, zsh och fish.
-    """
-    if click_completion is None:
-        click.echo(
-            click.style(
-                "Fel: click-completion är inte installerat. Installera det med 'poetry add click-completion'.",
-                fg="red",
+@handle_cli_error
+def task_import(input_file: str, merge: bool):
+    """Import tasks from file."""
+    input_path = Path(input_file)
+    if not input_path.exists():
+        raise CLIError(f"File not found: {input_file}")
+    
+    new_tasks = load_task_definitions(input_path)
+    if not new_tasks:
+        raise CLIError("No tasks found in input file")
+    
+    existing_tasks = load_tasks() if merge else {}
+    task_dict = {task["name"]: task for task in new_tasks}
+    
+    if merge:
+        # Check for conflicts
+        conflicts = set(task_dict) & set(existing_tasks)
+        if conflicts:
+            click.echo(
+                click.style(
+                    f"Warning: Found {len(conflicts)} conflicting task names",
+                    fg="yellow"
+                )
             )
+            if not click.confirm("Continue with merge?"):
+                return
+    
+    # Update tasks
+    existing_tasks.update(task_dict)
+    save_tasks(existing_tasks)
+    
+    click.echo(
+        click.style(
+            f"Imported {len(new_tasks)} tasks "
+            f"({'merged' if merge else 'overwrote existing tasks'})",
+            fg="green"
         )
-        return
+    )
 
-    extra_env = {"_GPTME_COMPLETE": "bash_source"}
-    tcf = click_completion.CompletionItemFormatter()
-
-    output = ""
-    shell_to_use = shell or click_completion.get_auto_completion_vars(extra_env=extra_env)[0]
-    assert shell_to_use is not None
-    actions = click_completion.get_completion_item_help(cli, shell=shell_to_use)
-
-    for action in actions:
-        output += f"# {'-' * 78}\n"
-        output += str(tcf(action)) + "\n\n"
-
-    comp_vars = click_completion.get_auto_completion_vars(cli_name="gptme")
-    if shell_to_use == "fish":
-        comp_vars = click_completion.get_auto_completion_vars(cli_name="gptme")
-    else:
-        comp_vars = click_completion.get_auto_completion_vars(cli_name="gptme")
-
-    if shell_to_use == "bash":
-        completion_file = "~/.bashrc"
-    elif shell_to_use == "zsh":
-        completion_file = "~/.zshrc"
-    elif shell_to_use == "fish":
-        completion_file = "~/.config/fish/config.fish"
-    else:
-        click.echo(click.style(f"Varning: Shell '{shell_to_use}' stöds inte automatiskt.", fg="yellow"))
-        click.echo("Du kan behöva konfigurera detta manuellt.")
-        return
-
-    completion_file = os.path.expanduser(completion_file)
-
-    config = {
-        "prog_name": "gptme",
-        "complete_var": comp_vars[1],
-        "aliases": ["_gptme_completion"],
-    }
+def load_tasks() -> Dict[str, Dict[str, Any]]:
+    """Load tasks from storage."""
     try:
-        if append:
-            click_completion.append_completion_code(completion_file, config)
-            click.echo(click.style(f"Automatisk komplettering för {shell_to_use} har lagts till i {completion_file}", fg="green"))
-        else:
-            click_completion.write_completion_script(completion_file, config)
-            click.echo(click.style(f"Automatisk komplettering för {shell_to_use} har skrivits till {completion_file}", fg="green"))
-        click.echo(f"Starta om din terminal eller kör 'source {completion_file}' för att aktivera kompletteringen.")
-    except IOError as e:
-        logger.error(f"Fel vid hantering av kompletteringsfilen '{completion_file}': {e}")
-        click.echo(click.style(f"Fel: Kunde inte installera automatisk komplettering.", fg="red"))
+        with open("task_queue.json", "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError as e:
+        raise CLIError(f"Failed to parse task file: {e}")
 
-# Implementera kommandohistorik
-@cli.command()
-def history():
-    """Visa en lista över tidigare körda kommandon."""
-    history = load_history()
-    if history:
-        click.echo(click.style("Kommandohistorik:", bold=True))
-        for i, cmd in enumerate(history, 1):
-            click.echo(f"{i}. {cmd}")
-    else:
-        click.echo(click.style("Ingen kommandohistorik hittades.", fg="blue"))
+def save_tasks(tasks: Dict[str, Dict[str, Any]]) -> None:
+    """Save tasks to storage."""
+    try:
+        with open("task_queue.json", "w") as f:
+            json.dump(tasks, f, indent=2)
+    except OSError as e:
+        raise CLIError(f"Failed to save tasks: {e}")
 
 if __name__ == "__main__":
     cli(obj={})
